@@ -13,9 +13,10 @@
  *   Firebase Console → Authentication → Settings → Authorized domains
  *
  * Required authorized domains for this project:
- *   - localhost                          (local development)
- *   - legend200711.github.io             (GitHub Pages)
- *   - remix-studio-4bf8a.firebaseapp.com (Firebase default hosting)
+ *   - localhost                              (local development)
+ *   - shattered-pwa.nthntjrn.workers.dev    (Cloudflare Workers — PRODUCTION)
+ *   - legend200711.github.io                (GitHub Pages — legacy)
+ *   - remix-studio-4bf8a.firebaseapp.com    (Firebase default hosting)
  */
 
 export const firebaseConfig = {
