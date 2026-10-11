@@ -15,5 +15,5 @@
  * For local development:  http://localhost:8787
  */
 export const workerConfig = {
-  workerBaseUrl: "https://shattered.pages.dev",
+  workerBaseUrl: "https://shattered-pwa.nthntjrn.workers.dev",
 };
