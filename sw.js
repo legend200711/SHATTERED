@@ -1,4 +1,4 @@
-const CACHE="shattered-shell-v5";
+const CACHE="shattered-shell-v6";
 const ASSETS=[
   "./",
   "./index.html",
@@ -11,6 +11,7 @@ const ASSETS=[
   "./firestore-service.js",
   "./storage-service.js",
   "./firebase-config.js",
+  "./worker-config.js",
   "./manifest.webmanifest",
   "./assets/icon.svg"
 ];

@@ -1,23 +1,19 @@
 /**
  * app.js — SHATTERED PWA main application
  *
- * v1.2.1 — Upload reliability fix
+ * v1.3.0 — Cloudflare R2 storage migration
  *
- * Root causes of the stuck-at-0% upload bug (all fixed):
- *   1. NaN progress: snapshot.totalBytes is 0 on the first snapshot event
- *      → Math.round(0/0) = NaN → progress bar never moved.
- *      Fixed in storage-service.js (uses file.size as denominator fallback).
- *   2. DOM destruction: subscribeCollection() fires renderHome() on every
- *      Firestore update, which calls setPage() and destroys the upload form's
- *      progress bar DOM nodes while the upload is still running.
- *      Fixed here: module-level uploadState blocks navigation and re-renders
- *      while an upload is active; progress callbacks write to a stable
- *      overlay instead of form-embedded elements.
- *   3. No stall detection: a stalled upload (CORS, permission denied, network
- *      drop) kept the Promise pending forever.
- *      Fixed in storage-service.js (STALL_MS timer + cancel).
- *   4. No cancel/retry UI.
- *      Fixed here: Cancel button, retry after failure, clear error messages.
+ * Audio storage: Firebase Storage removed → Cloudflare R2 via Worker API.
+ *   - Uploads go to POST /api/upload on the Cloudflare Worker.
+ *   - The Worker verifies the Firebase ID token server-side.
+ *   - R2 credentials never reach the browser.
+ *   - Real XHR upload progress replaces the Firebase SDK's snapshot events.
+ *   - Audio is served via /api/media/:key with HTTP Range support for seeking.
+ *
+ * Everything else is unchanged:
+ *   - Firebase Auth for identity (email/password + Google)
+ *   - Firestore for track metadata, profiles, lyrics, collabs, posts
+ *   - Public music listening without login
  *
  * Public visitors (no account) can:
  *   - Browse the music library and discovery pages

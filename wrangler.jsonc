@@ -1,12 +1,41 @@
 {
-  // SHATTERED PWA — Cloudflare Worker with Static Assets
+  // SHATTERED PWA — Cloudflare Worker + R2 Storage
   "name": "shattered-pwa",
   "main": "worker.js",
   "compatibility_date": "2025-06-10",
 
-  // Serve all static files from the project root
+  // Serve all static frontend files from the project root
   "assets": {
     "directory": ".",
     "binding": "ASSETS"
+  },
+
+  // ── R2 bucket binding ────────────────────────────────────────────────────
+  // Create the bucket first:  wrangler r2 bucket create shattered-audio
+  // Then deploy:              wrangler deploy
+  "r2_buckets": [
+    {
+      "binding":     "BUCKET",
+      "bucket_name": "shattered-audio"
+    }
+  ],
+
+  // ── Secrets (set via dashboard or CLI, never hardcoded here) ─────────────
+  // Required secrets — set each one with:
+  //   wrangler secret put FIREBASE_PROJECT_ID
+  //
+  // FIREBASE_PROJECT_ID  — your Firebase project ID (e.g. remix-studio-4bf8a)
+  //
+  // Optional:
+  // BUCKET_PUBLIC_DOMAIN — if you enable R2 public access, set to the public
+  //                        hostname (e.g. pub-abc123.r2.dev or your custom domain).
+  //                        If not set, audio is served via /api/media/ on this Worker.
+
+  // ── Local dev overrides ───────────────────────────────────────────────────
+  // Run locally with:  wrangler dev
+  // The Worker will be available at http://localhost:8787
+  // Set worker-config.js workerBaseUrl to http://localhost:8787 for local testing.
+  "dev": {
+    "port": 8787
   }
 }
