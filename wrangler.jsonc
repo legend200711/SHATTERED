@@ -1,0 +1,12 @@
+{
+  // SHATTERED PWA — Cloudflare Worker with Static Assets
+  "name": "shattered-pwa",
+  "main": "worker.js",
+  "compatibility_date": "2025-06-10",
+
+  // Serve all static files from the project root
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS"
+  }
+}
