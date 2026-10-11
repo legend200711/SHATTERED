@@ -9,8 +9,13 @@
  * domain settings. Never place server-side service-account keys or admin
  * credentials here.
  *
- * Add your Cloudflare Pages domain to:
+ * Add all deployment domains to:
  *   Firebase Console → Authentication → Settings → Authorized domains
+ *
+ * Required authorized domains for this project:
+ *   - localhost                          (local development)
+ *   - legend200711.github.io             (GitHub Pages)
+ *   - remix-studio-4bf8a.firebaseapp.com (Firebase default hosting)
  */
 
 export const firebaseConfig = {
