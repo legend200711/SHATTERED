@@ -57,8 +57,14 @@ export function resolveContentType(file) {
 export function translateStorageError(err) {
   const code = err?.code || "";
   const status = err?.status || 0;
+  if (code === "not-signed-in") {
+    return "You are not signed in. Please sign in and try again.";
+  }
+  if (code === "token-refresh-failed") {
+    return "Could not refresh your sign-in token. Sign out and back in, then try again.";
+  }
   if (status === 401 || code === "unauthorized") {
-    return "Permission denied. Make sure you are signed in and try again.";
+    return "Upload authorisation failed. Sign out and back in, then try again.";
   }
   if (status === 413 || code === "too-large") {
     return err.message || "File is too large. Maximum is 80 MB.";
@@ -86,11 +92,20 @@ async function getIdToken() {
   const { auth } = await getShatteredAuth();
   if (!auth?.currentUser) {
     const err = new Error("Not signed in");
-    err.code = "unauthorized";
+    err.code = "not-signed-in";
     throw err;
   }
-  // getIdToken(true) forces a refresh if the token is near expiry
-  return auth.currentUser.getIdToken(false);
+  try {
+    // Force a token refresh so we never send a near-expiry token to the Worker.
+    return await auth.currentUser.getIdToken(true);
+  } catch (refreshErr) {
+    // Propagate the original Firebase error message but mark it as a
+    // token-refresh failure so the UI shows a targeted message rather than
+    // the generic "permission denied" that previously surfaced here.
+    const err = new Error(refreshErr?.message || "Token refresh failed");
+    err.code = "token-refresh-failed";
+    throw err;
+  }
 }
 
 /* ── Upload audio file ───────────────────────────────────────────────────── */
@@ -238,7 +253,7 @@ export function uploadAudioFile(file, trackId, ownerUid, onProgress = () => {}) 
   };
 }
 
-/* ── Delete audio from R2 ────────────────────────────────────────────────── */
+/* ── Delete audio from R2 (R2-only, used for best-effort cleanup) ─────────── */
 export async function deleteAudioFile(storagePath) {
   if (!storagePath) return;
 
@@ -260,4 +275,69 @@ export async function deleteAudioFile(storagePath) {
   } catch (_) {
     // Best-effort; caller handles retry if needed
   }
+}
+
+/* ── Delete a full track (R2 + Firestore) via Worker ─────────────────────── */
+/**
+ * Calls DELETE /api/track/:trackId on the Worker.
+ *
+ * The Worker verifies the caller's identity server-side, reads the Firestore
+ * document to check ownerUid, deletes the R2 audio file, then deletes the
+ * Firestore document. Ownership is never trusted from the client.
+ *
+ * @returns {Promise<{deleted: boolean, partial?: boolean, r2Deleted?: boolean,
+ *                    fsDeleted?: boolean, r2Error?: string, fsError?: string}>}
+ * @throws  on network error or HTTP 4xx (auth / permission / not-found)
+ */
+export async function deleteTrackFromWorker(trackId) {
+  const workerBase = workerConfig.workerBaseUrl;
+  if (!workerBase || workerBase.includes("YOUR_WORKER")) {
+    const err = new Error("Worker URL not configured. See SETUP.md.");
+    err.code = "worker-not-configured";
+    throw err;
+  }
+
+  const idToken = await getIdToken(); // throws if not signed in
+
+  const resp = await fetch(`${workerBase}/api/track/${encodeURIComponent(trackId)}`, {
+    method:  "DELETE",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+
+  let body;
+  try {
+    body = await resp.json();
+  } catch (_) {
+    const err = new Error(`Server returned invalid JSON (HTTP ${resp.status})`);
+    err.status = resp.status;
+    throw err;
+  }
+
+  if (resp.status === 401 || resp.status === 403) {
+    const err = new Error(body.error || "Permission denied");
+    err.status = resp.status;
+    err.code   = resp.status === 403 ? "forbidden" : "unauthorized";
+    throw err;
+  }
+
+  if (resp.status === 404) {
+    const err = new Error(body.error || "Track not found");
+    err.status = 404;
+    err.code   = "not-found";
+    throw err;
+  }
+
+  if (resp.status === 200) {
+    return { deleted: true };
+  }
+
+  if (resp.status === 207) {
+    // Partial success — at least one step failed
+    return { ...body, deleted: false, partial: true };
+  }
+
+  // Any other non-2xx status
+  const err = new Error(body.error || `Delete failed (HTTP ${resp.status})`);
+  err.status = resp.status;
+  throw err;
 }

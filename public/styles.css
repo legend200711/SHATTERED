@@ -71,3 +71,16 @@ body[data-auth-state="loading"] .sidebar-creator{visibility:hidden;pointer-event
 .upload-overlay-error{color:#ff9070;font-size:12px;line-height:1.5;margin-top:14px;padding:10px 12px;background:#1f0f0a;border-radius:8px;text-align:left}
 .upload-cancel-btn{opacity:.75}
 .upload-cancel-btn:hover{opacity:1}
+
+/* ── Track owner menu (⋮) ────────────────────────────────────────────────── */
+.track-owner-menu{position:absolute;top:8px;right:8px;z-index:5}
+.track-card{position:relative}
+.track-menu-btn{width:28px;height:28px;border-radius:8px;background:#0b1c28cc;border:1px solid #2a3d50;color:var(--muted);font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;backdrop-filter:blur(4px)}
+.track-menu-btn:hover,.track-menu-btn[aria-expanded="true"]{background:var(--panel2);color:var(--text);border-color:var(--blue)}
+.track-menu-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:5px;min-width:150px;z-index:50;box-shadow:0 8px 24px #00000099}
+.track-menu-item{display:block;width:100%;text-align:left;background:none;border:0;padding:9px 12px;border-radius:7px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer}
+.track-menu-item:hover{background:var(--line)}
+.track-menu-item.danger{color:#ff7070}
+.track-menu-item.danger:hover{background:#2a0f0f}
+/* ── Delete confirm dialog tweak ──────────────────────────────────────────── */
+.delete-confirm-box .auth-gate-actions{flex-direction:row;justify-content:center;flex-wrap:wrap}

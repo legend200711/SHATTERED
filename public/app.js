@@ -59,6 +59,7 @@ import {
   validateAudioFile,
   uploadAudioFile,
   deleteAudioFile,
+  deleteTrackFromWorker,
   translateStorageError,
 } from "./storage-service.js";
 
@@ -256,7 +257,73 @@ function updateCounts(){
   const nd=$("#notificationDot");if(nd)nd.style.display=notifications.some(n=>!n.read)?"block":"none";
 }
 function coverMarkup(t,i=0){return `<div class="cover ${palettes[i%palettes.length]}"><div class="cover-mark">S<span>/</span></div></div>`;}
-function trackCard(t,i){return `<article class="track-card">${coverMarkup(t,i)}<h3 title="${esc(t.title)}">${esc(t.title)}</h3><p>${esc(t.artist)} · ${esc(t.genre||"Independent")}</p><div class="track-meta"><small>${esc(t.origin||"Creator upload")}</small><button class="play-btn" data-play="${esc(t.id)}" aria-label="Play ${esc(t.title)}">▶</button></div></article>`;}
+
+function trackCard(t,i=0) {
+  const isOwner = currentUser && t.ownerUid === currentUser.uid;
+  const ownerMenu = isOwner
+    ? `<div class="track-owner-menu">
+         <button class="track-menu-btn" aria-label="Track options" data-track-menu="${esc(t.id)}" aria-expanded="false">⋮</button>
+         <div class="track-menu-dropdown" id="tmd-${esc(t.id)}" hidden>
+           <button class="track-menu-item danger" data-delete-track="${esc(t.id)}">🗑 Delete song</button>
+         </div>
+       </div>`
+    : "";
+  return `<article class="track-card" id="track-card-${esc(t.id)}">${coverMarkup(t,i)}${ownerMenu}<h3 title="${esc(t.title)}">${esc(t.title)}</h3><p>${esc(t.artist)} · ${esc(t.genre||"Independent")}</p><div class="track-meta"><small>${esc(t.origin||"Creator upload")}</small><button class="play-btn" data-play="${esc(t.id)}" aria-label="Play ${esc(t.title)}">▶</button></div></article>`;
+}
+
+/* ── Delete-track confirmation dialog ───────────────────────────────────────── */
+function showDeleteTrackConfirm(track, onConfirm) {
+  const existing = document.getElementById("deleteTrackModal");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "deleteTrackModal";
+  overlay.className = "auth-gate-overlay"; // reuse the modal-overlay style
+  overlay.innerHTML = `
+    <div class="auth-gate-box delete-confirm-box" role="dialog" aria-modal="true" aria-labelledby="dtmTitle">
+      <div class="auth-gate-icon" style="font-size:32px;margin-bottom:10px">🗑</div>
+      <h2 id="dtmTitle" style="margin:0 0 10px">Delete this song?</h2>
+      <p style="margin:0 0 6px"><b>${esc(track.title)}</b> by ${esc(track.artist)}</p>
+      <p class="auth-gate-note" style="color:var(--muted)!important;margin-bottom:22px!important">
+        This will permanently remove your song from SHATTERED, including its
+        associated uploaded audio file. This action cannot be undone.
+      </p>
+      <div class="auth-gate-actions" style="flex-direction:row;justify-content:center;gap:12px">
+        <button class="btn outline" id="dtmCancel">Cancel</button>
+        <button class="btn primary" id="dtmConfirm" style="background:#c03030;border-color:#c03030">Delete Song</button>
+      </div>
+      <div id="dtmError" style="color:#ff7070;font-size:12px;margin-top:14px;display:none"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  function close() { overlay.remove(); }
+
+  document.getElementById("dtmCancel").onclick  = close;
+  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", function esc2(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc2); }
+  });
+
+  const confirmBtn = document.getElementById("dtmConfirm");
+  confirmBtn.onclick = async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Deleting…";
+    const errEl = document.getElementById("dtmError");
+    errEl.style.display = "none";
+    try {
+      await onConfirm();
+      close();
+    } catch (err) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Delete Song";
+      errEl.textContent = err.message || "Delete failed. Please try again.";
+      errEl.style.display = "block";
+    }
+  };
+
+  // Focus the cancel button for accessibility
+  document.getElementById("dtmCancel").focus();
+}
 
 function renderHome(){
   const featured=$("#featuredTracks");
@@ -498,6 +565,11 @@ function addNotice(title,body){return put("notifications",{id:uid(),title,body,c
 // ── Form bindings ────────────────────────────────────────────────────────────
 function bindForms(){
   const uf=$("#uploadForm");
+
+  // _retryFile holds the original File object so a retry after a transient
+  // network or server error re-uses the same file without re-reading the input.
+  let _retryFile = null;
+
   if(uf)uf.onsubmit=async e=>{
     e.preventDefault();
     if (!currentUser) { showAuthGate("Uploading music requires a SHATTERED account."); return; }
@@ -505,8 +577,12 @@ function bindForms(){
     // Prevent duplicate submissions while an upload is already running
     if (uploadState) { toast("An upload is already in progress."); return; }
 
-    const f    = new FormData(uf);
-    const file = f.get("audio");
+    const f = new FormData(uf);
+
+    // Use the preserved retry file if the input was cleared by a DOM re-render,
+    // otherwise read fresh from the form and save it for future retries.
+    const file = (f.get("audio")?.size > 0 ? f.get("audio") : null) || _retryFile;
+    if (file) _retryFile = file; // keep reference for retry
 
     // Client-side file validation
     const validationErr = validateAudioFile(file);
@@ -549,13 +625,15 @@ function bindForms(){
     };
     bindCancelBtn();
 
-    // ── 1. Upload audio to Firebase Storage ──────────────────────────────
+    // ── 1. Upload audio file to R2 via Cloudflare Worker ─────────────────
     const { promise: storagePromise, cancel: cancelStorage } = uploadAudioFile(
       file, trackId, currentUser.uid,
       pct => {
         setUploadProgress(pct);
         if (pct < 100) {
-          setUploadStatus(`Uploading… ${pct}%`);
+          setUploadStatus(`Uploading audio… ${pct}%`);
+        } else {
+          setUploadStatus("Audio received — saving track details…");
         }
       }
     );
@@ -573,17 +651,19 @@ function bindForms(){
       setUploadProgress(100);
       setUploadStatus("Saving track details…");
     } catch (storageErr) {
-      console.error("Storage upload error:", storageErr);
+      console.error("R2 upload error:", storageErr);
       uploadState = null;
-      const userMsg = translateStorageError(storageErr);
-      // Offer retry only for non-permission errors (permission errors need
-      // the user to fix their account first)
-      const canRetry = storageErr.code !== "storage/unauthorized"
-                    && storageErr.code !== "storage/unauthenticated";
-      showUploadError(userMsg, canRetry ? () => {
-        // Re-submit the form programmatically with the same file
+      const userMsg = "Upload failed — " + translateStorageError(storageErr);
+      // Auth and token-refresh errors require the user to sign out and back in.
+      // Retrying immediately will fail again for those cases.
+      const isAuthError = storageErr.code === "unauthorized"
+                       || storageErr.code === "not-signed-in"
+                       || storageErr.code === "token-refresh-failed"
+                       || storageErr.status === 401;
+      showUploadError(userMsg, isAuthError ? null : () => {
+        // Re-dispatch with the preserved file reference
         uf.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      } : null);
+      });
       return;
     }
 
@@ -595,6 +675,7 @@ function bindForms(){
     }
 
     // ── 3. Save metadata to Firestore ─────────────────────────────────────
+    setUploadStatus("Publishing track…");
     const firestoreMeta = {
       ...meta,
       storagePath:       storageResult.storagePath,
@@ -606,21 +687,52 @@ function bindForms(){
       await saveTrackMeta(firestoreMeta, currentUser.uid);
     } catch (firestoreErr) {
       console.error("Firestore write error:", firestoreErr);
-      // Firestore write failed AFTER the audio was stored.
-      // Attempt to delete the orphan Storage file to keep things consistent.
-      try { await deleteAudioFile(storageResult.storagePath); } catch (_) {}
       uploadState = null;
+      // The audio file is already stored in R2. Do NOT delete it on a Firestore
+      // error — the user can retry and we will overwrite the same document with
+      // setDoc (idempotent). Deleting the audio then retrying would cause an
+      // unnecessary re-upload.
+      //
+      // Surface the actual Firestore error message so the user and developer
+      // can understand what went wrong (e.g. rules denial vs network failure).
+      const fsMsg = firestoreErr?.message || "unknown error";
       showUploadError(
-        "Track details could not be saved (Firestore error). " +
-        "The audio file has been removed to avoid duplicates. Please try again.",
+        `Track details could not be saved: ${fsMsg}. ` +
+        "Your audio file is safe — tap Retry to publish it.",
         () => {
-          uf.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          // On retry we must re-use the same trackId so that if R2 already has
+          // the file, the Worker will accept the upload (R2 put is idempotent).
+          // However the form submit regenerates trackId via uid(). To avoid
+          // a duplicate R2 object we skip re-uploading: attempt the Firestore
+          // write directly with the already-known storageResult.
+          (async () => {
+            showUploadOverlay({ title: meta.title, artist: meta.artist });
+            setUploadProgress(100);
+            setUploadStatus("Retrying publication…");
+            try {
+              await saveTrackMeta(firestoreMeta, currentUser.uid);
+              _retryFile = null;
+              await addNotice("Track uploaded", `${meta.title} was shared with the community.`);
+              setUploadStatus("Upload complete!");
+              setTimeout(() => {
+                removeUploadOverlay();
+                toast(`"${meta.title}" is now live in the music library.`);
+                setPage("music");
+              }, 1200);
+            } catch (retryErr) {
+              showUploadError(
+                `Could not publish track: ${retryErr?.message || "unknown error"}. Please try again.`,
+                null
+              );
+            }
+          })();
         }
       );
       return;
     }
 
     // ── 4. Success ────────────────────────────────────────────────────────
+    _retryFile = null; // clear preserved file on success
     uploadState = null;
     await addNotice("Track uploaded", `${meta.title} was shared with the community.`);
     setUploadStatus("Upload complete!");
@@ -766,6 +878,91 @@ function downloadData(){
 document.addEventListener("click",async e=>{
   const p=e.target.closest("[data-page]");if(p){e.preventDefault();setPage(p.dataset.page);return;}
   const play=e.target.closest("[data-play]");if(play){playTrack(play.dataset.play);return;}
+
+  // ── Track owner ⋮ menu toggle ──────────────────────────────────────────────
+  const menuBtn = e.target.closest("[data-track-menu]");
+  if (menuBtn) {
+    e.stopPropagation();
+    const tid = menuBtn.dataset.trackMenu;
+    const dropdown = document.getElementById("tmd-" + tid);
+    if (!dropdown) return;
+    const isOpen = !dropdown.hidden;
+    // Close all open track menus first
+    document.querySelectorAll(".track-menu-dropdown").forEach(d => { d.hidden = true; });
+    document.querySelectorAll("[data-track-menu]").forEach(b => b.setAttribute("aria-expanded","false"));
+    if (!isOpen) {
+      dropdown.hidden = false;
+      menuBtn.setAttribute("aria-expanded","true");
+    }
+    return;
+  }
+
+  // ── Delete track ───────────────────────────────────────────────────────────
+  const dt = e.target.closest("[data-delete-track]");
+  if (dt) {
+    // Close the dropdown first
+    document.querySelectorAll(".track-menu-dropdown").forEach(d => { d.hidden = true; });
+    document.querySelectorAll("[data-track-menu]").forEach(b => b.setAttribute("aria-expanded","false"));
+
+    if (!currentUser) { showAuthGate("Deleting songs requires a SHATTERED account."); return; }
+
+    const trackId = dt.dataset.deleteTrack;
+    const track   = tracks.find(x => x.id === trackId);
+    if (!track) { toast("Track not found."); return; }
+
+    // Client-side ownership pre-check (server enforces the real check)
+    if (track.ownerUid !== currentUser.uid) {
+      toast("You can only delete your own songs.");
+      return;
+    }
+
+    showDeleteTrackConfirm(track, async () => {
+      const result = await deleteTrackFromWorker(trackId);
+
+      // Whether fully or partially successful, remove from local stores
+      tracks = tracks.filter(x => x.id !== trackId);
+      try { await remove("tracks", trackId); } catch (_) {}
+
+      // Stop player if this track is currently playing
+      if (currentTrackId === trackId) {
+        const audio = $("#audio");
+        if (audio) { audio.pause(); audio.src = ""; }
+        const player = $("#player");
+        if (player) player.hidden = true;
+        currentTrackId = null;
+      }
+
+      // Remove the card from the DOM immediately (no full re-render needed)
+      const card = document.getElementById("track-card-" + trackId);
+      if (card) card.remove();
+
+      // Update counts in-place
+      updateCounts();
+
+      // Update the track-count heading if visible (music view)
+      const heading = document.querySelector("#main .section-head h2");
+      if (heading && heading.textContent.startsWith("All tracks")) {
+        heading.textContent = `All tracks (${tracks.length})`;
+      }
+
+      if (result.partial) {
+        const details = [];
+        if (!result.r2Deleted) details.push("audio file may remain in storage");
+        if (!result.fsDeleted) details.push("metadata may remain in database");
+        toast(`Song deleted (partial: ${details.join("; ")}). Check again shortly.`);
+      } else {
+        toast("Song deleted successfully.");
+      }
+    });
+    return;
+  }
+
+  // Close open track menus when clicking elsewhere
+  if (!e.target.closest(".track-owner-menu")) {
+    document.querySelectorAll(".track-menu-dropdown").forEach(d => { d.hidden = true; });
+    document.querySelectorAll("[data-track-menu]").forEach(b => b.setAttribute("aria-expanded","false"));
+  }
+
   const join=e.target.closest("[data-join]");if(join){
     if (!currentUser) {
       showAuthGate("Expressing interest in a collaboration requires a SHATTERED account so that other creators can identify and reach you.");

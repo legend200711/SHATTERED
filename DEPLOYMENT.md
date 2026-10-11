@@ -1,59 +1,59 @@
 # SHATTERED — Deployment Guide
 
-> **Before you deploy:** complete the **Firebase Storage CORS setup** (step 0
-> below) or audio uploads will remain stuck at 0%.
-
 ## Prerequisites
 
 - Firebase CLI installed: `npm install -g firebase-tools`
-- A Cloudflare account (free tier is sufficient, or use GitHub Pages)
+- Wrangler CLI installed: `npm install -g wrangler`
+- A Cloudflare account (free tier is sufficient)
 - The Firebase project configured as described in [README.md](./README.md)
 - Git installed locally
 
 ---
 
-## Step 0 — Configure Firebase Storage CORS (required for uploads)
+## Step 0 — Deploy the Cloudflare Worker (required for uploads)
 
-Firebase Storage blocks cross-origin upload requests by default. Without this
-step, `uploadBytesResumable` will fail with a CORS error and the progress bar
-will remain at 0%.
+Audio files are stored in **Cloudflare R2** via the Worker at `worker.js`.
+Firebase Storage is **not** used for audio.
 
-### What to do
-
-1. Install and log in to the Firebase CLI if you haven't already:
+1. Install Wrangler and log in:
 
    ```bash
-   npm install -g firebase-tools
-   firebase login
+   npm install -g wrangler
+   wrangler login
    ```
 
-2. Apply the CORS rules from `cors.json` to your Storage bucket:
+2. Create the R2 bucket (first time only):
 
    ```bash
-   gsutil cors set cors.json gs://remix-studio-4bf8a.firebasestorage.app
+   wrangler r2 bucket create shattered-audio
    ```
 
-   Replace `remix-studio-4bf8a.firebasestorage.app` with your actual bucket
-   name if you changed it in `firebase-config.js`.
-
-3. Verify the rules were applied:
+3. Set the Firebase project ID secret (must match `firebaseConfig.projectId`
+   in `public/firebase-config.js`):
 
    ```bash
-   gsutil cors get gs://remix-studio-4bf8a.firebasestorage.app
+   wrangler secret put FIREBASE_PROJECT_ID
+   # Enter: remix-studio-4bf8a  (or your own project ID)
    ```
 
-   You should see the origins from `cors.json` listed.
+4. Deploy the Worker with static assets:
 
-4. If you deploy to a domain not listed in `cors.json`, add it to the `origin`
-   array and re-run `gsutil cors set` before uploading from that domain.
+   ```bash
+   wrangler deploy
+   ```
 
-### Why CORS is required
+5. Copy the Worker URL (e.g. `https://shattered-pwa.YOUR_SUBDOMAIN.workers.dev`)
+   and update `public/worker-config.js`:
 
-The app is hosted on `legend200711.github.io` (or your own domain), but the
-audio files are written to `remix-studio-4bf8a.firebasestorage.app`. Browsers
-reject cross-origin POST/PUT requests unless the target server explicitly
-allows the origin. Firebase Storage does not add CORS headers by default for
-non-Firebase-hosted domains.
+   ```js
+   export const workerConfig = {
+     workerBaseUrl: "https://shattered-pwa.YOUR_SUBDOMAIN.workers.dev",
+   };
+   ```
+
+6. Add the Worker URL to Firebase Auth authorized domains:
+
+   Firebase Console → Authentication → Settings → Authorized domains → Add domain
 
 ---
 

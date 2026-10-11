@@ -2,15 +2,15 @@
  * worker.js — SHATTERED Cloudflare Worker
  *
  * Handles:
- *   POST /api/upload          — authenticated audio upload → R2
- *   DELETE /api/media/:key    — authenticated delete from R2 (owner only)
- *   GET  /api/media/:key      — public audio streaming with Range support
- *   GET  /api/tracks          — public list of published tracks from R2 metadata
- *   *                         — static asset passthrough (Cloudflare Pages assets)
+ *   POST /api/upload           — authenticated audio upload → R2
+ *   DELETE /api/track/:trackId — authenticated full track delete: R2 + Firestore
+ *   DELETE /api/media/:key     — authenticated R2-only delete (owner only)
+ *   GET  /api/media/:key       — public audio streaming with Range support
+ *   *                          — static asset passthrough (Cloudflare Pages assets)
  *
  * Required Worker bindings (set in wrangler.jsonc + Cloudflare dashboard):
- *   env.BUCKET          — R2 bucket binding (name: BUCKET)
- *   env.FIREBASE_PROJECT_ID — secret: your Firebase projectId (e.g. remix-studio-4bf8a)
+ *   env.BUCKET               — R2 bucket binding (name: BUCKET)
+ *   env.FIREBASE_PROJECT_ID  — secret: your Firebase projectId (e.g. remix-studio-4bf8a)
  *
  * All R2 credentials stay server-side — never exposed to the browser.
  * Firebase Auth is used for identity: the browser sends its Firebase ID token
@@ -88,21 +88,23 @@ async function verifyFirebaseToken(idToken, projectId) {
   if (payload.iss !== `https://securetoken.google.com/${projectId}`) throw new Error("Token issuer mismatch");
   if (!payload.sub)            throw new Error("Token missing subject");
 
-  // 3. Fetch Firebase public signing certs
-  const certsUrl = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
-  const certsResp = await fetch(certsUrl);
-  if (!certsResp.ok) throw new Error("Could not fetch Firebase public certs");
-  const certs = await certsResp.json();
+  // 3. Fetch Firebase public signing keys (JWK format — directly importable by Web Crypto)
+  // Using the JWKS endpoint instead of the X.509 PEM endpoint because
+  // crypto.subtle.importKey("spki") expects a raw SubjectPublicKeyInfo blob,
+  // not a full X.509 certificate. The JWKS endpoint returns JWK objects that
+  // crypto.subtle.importKey("jwk") can consume directly without any ASN.1 parsing.
+  const jwksUrl = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
+  const jwksResp = await fetch(jwksUrl);
+  if (!jwksResp.ok) throw new Error("Could not fetch Firebase public keys");
+  const jwks = await jwksResp.json();
 
-  const certPem = certs[header.kid];
-  if (!certPem) throw new Error("Unknown signing key kid: " + header.kid);
+  const jwk = (jwks.keys || []).find(k => k.kid === header.kid);
+  if (!jwk) throw new Error("Unknown signing key kid: " + header.kid);
 
-  // 4. Import the RSA public key from PEM
-  const pemBody = certPem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
-  const certDer = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
+  // 4. Import the RSA public key from JWK
   const publicKey = await crypto.subtle.importKey(
-    "spki",
-    certDer,
+    "jwk",
+    jwk,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["verify"]
@@ -221,6 +223,135 @@ async function handleUpload(request, env, origin) {
   return json({ url, storagePath: key }, 200, origin);
 }
 
+/* ── DELETE /api/track/:trackId ────────────────────────────────────────────── */
+/**
+ * Full track deletion: verifies auth, looks up the track in Firestore to
+ * confirm ownership, deletes the R2 audio object, then deletes the Firestore
+ * document. Ownership is established from the server-stored ownerUid — the
+ * client never supplies the UID used for the ownership check.
+ *
+ * On partial failure the remaining step is still attempted so the caller can
+ * retry. A 207 partial-success response is returned if only one step failed.
+ */
+async function handleDeleteTrack(request, env, origin, trackId) {
+  // 1. Auth — derive caller UID from verified token
+  let payload;
+  try {
+    payload = await requireAuth(request, env);
+  } catch (err) {
+    return json({ error: err.message }, err.status || 401, origin);
+  }
+  const callerUid = payload.sub;
+
+  // Validate trackId — must be non-empty, no slashes
+  if (!trackId || /[\/\x00]/.test(trackId)) {
+    return json({ error: "Invalid track ID" }, 400, origin);
+  }
+
+  const projectId = env.FIREBASE_PROJECT_ID;
+  if (!projectId) {
+    return json({ error: "FIREBASE_PROJECT_ID not configured" }, 500, origin);
+  }
+
+  // 2. Fetch the track document from Firestore via REST (no Admin SDK needed)
+  //    This is the only source of truth for ownership — we never trust a UID
+  //    supplied by the client.
+  const fsBase = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+
+  // We need an access token for Firestore. Re-use the verified Firebase ID token
+  // as a bearer credential for the Firestore REST API (it works for user-owned docs).
+  const authHeader = request.headers.get("Authorization") || "";
+  const idToken    = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+  let trackDoc;
+  try {
+    const resp = await fetch(`${fsBase}/tracks/${encodeURIComponent(trackId)}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (resp.status === 404) {
+      return json({ error: "Track not found" }, 404, origin);
+    }
+    // Firestore returns 403 when a document does not exist AND the security rule
+    // denies unauthenticated/unowned reads (non-published doc with no data →
+    // rule evaluation sees no resource.data and denies). Treat this as 404
+    // because the caller is already authenticated; if the doc existed and was
+    // owned by the caller they would have read access.
+    if (resp.status === 403) {
+      return json({ error: "Track not found" }, 404, origin);
+    }
+    if (!resp.ok) {
+      const body = await resp.text();
+      return json({ error: `Firestore read error (${resp.status}): ${body.slice(0, 200)}` }, 502, origin);
+    }
+    trackDoc = await resp.json();
+  } catch (err) {
+    return json({ error: "Could not reach Firestore: " + err.message }, 502, origin);
+  }
+
+  // 3. Ownership check — compare server-stored ownerUid with verified caller UID
+  const storedOwnerUid = trackDoc.fields?.ownerUid?.stringValue || "";
+  if (!storedOwnerUid || storedOwnerUid !== callerUid) {
+    return json({ error: "Forbidden: you do not own this track" }, 403, origin);
+  }
+
+  // 4. Delete R2 audio object
+  const storagePath = trackDoc.fields?.storagePath?.stringValue || "";
+  let r2Deleted   = false;
+  let r2Error     = null;
+
+  if (storagePath) {
+    try {
+      await env.BUCKET.delete(storagePath);
+      r2Deleted = true;
+    } catch (err) {
+      r2Error = err.message;
+      console.error("R2 delete error for", storagePath, err);
+    }
+  } else {
+    // No storagePath recorded — nothing to delete from R2, treat as ok
+    r2Deleted = true;
+  }
+
+  // 5. Delete Firestore document
+  let fsDeleted = false;
+  let fsError   = null;
+
+  try {
+    const delResp = await fetch(`${fsBase}/tracks/${encodeURIComponent(trackId)}`, {
+      method:  "DELETE",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (delResp.ok) {
+      fsDeleted = true;
+    } else {
+      const body = await delResp.text();
+      fsError = `Firestore delete (${delResp.status}): ${body.slice(0, 200)}`;
+    }
+  } catch (err) {
+    fsError = err.message;
+    console.error("Firestore delete error for track", trackId, err);
+  }
+
+  // 6. Also remove from local IndexedDB is client-side only — nothing to do here.
+  //    The Firestore listener in the frontend will fire automatically once the
+  //    document is deleted, removing the track from the live feed.
+
+  if (r2Deleted && fsDeleted) {
+    return json({ deleted: true, trackId }, 200, origin);
+  }
+
+  // Partial failure: report what succeeded and what didn't
+  return json({
+    deleted:    false,
+    partial:    true,
+    trackId,
+    r2Deleted,
+    fsDeleted,
+    r2Error,
+    fsError,
+  }, 207, origin);
+}
+
 /* ── DELETE /api/media/:key ───────────────────────────────────────────────── */
 async function handleDelete(request, env, origin, key) {
   // Auth
@@ -307,6 +438,12 @@ export default {
     // API routes
     if (path === "/api/upload" && method === "POST") {
       return handleUpload(request, env, origin);
+    }
+
+    // Full track delete (R2 + Firestore): DELETE /api/track/:trackId
+    if (path.startsWith("/api/track/") && method === "DELETE") {
+      const trackId = decodeURIComponent(path.slice("/api/track/".length));
+      return handleDeleteTrack(request, env, origin, trackId);
     }
 
     if (path.startsWith("/api/media/") && method === "DELETE") {
