@@ -14,8 +14,13 @@
   <label class="search"><span>⌕</span><input id="globalSearch" placeholder="Search tracks, creators, lyrics…" autocomplete="off"></label>
   <div class="top-actions">
     <button class="icon-btn" data-page="notifications" aria-label="Notifications">♧<i id="notificationDot"></i></button>
-    <!-- Profile menu trigger -->
-    <div class="profile-menu-wrap" id="profileMenuWrap">
+    <!-- Guest actions (shown when signed out) -->
+    <div class="guest-actions" id="guestActions">
+      <a href="./login.html" class="btn outline btn-sm">Sign in</a>
+      <a href="./login.html" class="btn primary btn-sm">Join free</a>
+    </div>
+    <!-- Profile menu trigger (shown when signed in) -->
+    <div class="profile-menu-wrap" id="profileMenuWrap" hidden>
       <button class="avatar" id="profileAvatarBtn" aria-label="Account menu" aria-haspopup="true" aria-expanded="false">YOU</button>
       <div class="profile-dropdown" id="profileDropdown" hidden>
         <div class="profile-dropdown-user">
@@ -33,7 +38,7 @@
 </header>
 <div class="layout">
 <aside class="sidebar">
-  <div class="side-label">YOUR SPACE</div>
+  <div class="side-label">EXPLORE</div>
   <button class="nav-item active" data-page="home"><span>⌂</span> Discover</button>
   <button class="nav-item" data-page="music"><span>♫</span> Music</button>
   <button class="nav-item" data-page="videos"><span>▣</span> Music videos</button>
@@ -42,10 +47,13 @@
   <button class="nav-item" data-page="feed"><span>◉</span> Community feed</button>
   <button class="nav-item" data-page="messages"><span>✉</span> Messages</button>
   <button class="nav-item" data-page="notifications"><span>♧</span> Notifications</button>
-  <div class="side-label side-gap">CREATOR TOOLS</div>
-  <button class="nav-item" data-page="upload"><span>＋</span> Upload music</button>
-  <button class="nav-item" data-page="profile"><span>◌</span> My profile</button>
+  <div class="sidebar-creator side-label side-gap">CREATOR TOOLS</div>
+  <div class="sidebar-creator">
+    <button class="nav-item" data-page="upload"><span>＋</span> Upload music</button>
+    <button class="nav-item" data-page="profile"><span>◌</span> My profile</button>
+  </div>
   <div class="sidebar-note"><b>Every creator belongs.</b><p>Human-made, AI-assisted, and AI-generated music are welcome. Respect rights and credit collaborators.</p></div>
+  <div class="sidebar-signin" id="sidebarSignin"><a href="./login.html" class="btn primary" style="display:block;text-align:center;margin:0 0 8px;font-size:12px">Sign in / Join free</a><p>Create an account to upload music, publish lyrics, and build your artist profile.</p></div>
 </aside>
 <main id="main" tabindex="-1">
 <section class="hero">

@@ -1,16 +1,15 @@
 /**
- * auth-guard.js — Centralized Firebase Authentication guard
+ * auth-guard.js — Centralized Firebase Authentication for SHATTERED
  *
- * Import this module at the top of the main application's script.
- * It will:
- *   1. Wait for Firebase to resolve the user's auth state.
- *   2. Redirect to login.html if the user is not authenticated.
- *   3. Expose the resolved user and auth instance via `getShatteredAuth()`.
- *   4. Provide `signOutUser()` for the sign-out button.
+ * v1.2.0 — Public access update:
+ *   Public visitors (unauthenticated) can browse and play music.
+ *   No redirect to login.html on load — auth state is resolved and
+ *   returned to the caller. The caller decides what to do with null.
  *
  * Usage:
- *   import { getShatteredAuth, signOutUser } from "./auth-guard.js";
- *   const { user, auth } = await getShatteredAuth();
+ *   import { getShatteredAuth, signOutUser, requireAuth } from "./auth-guard.js";
+ *   const { user, auth } = await getShatteredAuth();  // user may be null
+ *   requireAuth();  // redirects to login if not signed in
  */
 
 import { initializeApp, getApps }       from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
@@ -43,10 +42,15 @@ function ensureFirebase() {
   setPersistence(_auth, browserLocalPersistence).catch(() => {});
 }
 
-/* ── Auth guard promise ───────────────────────────────────────────────────── */
-let _resolvedUser = null;
+/* ── Auth state promise ───────────────────────────────────────────────────── */
+let _resolvedUser = null;  // null = signed out, Firebase User = signed in
 let _authPromise  = null;
 
+/**
+ * Resolves the current Firebase auth state.
+ * Always resolves — user will be null for unauthenticated visitors.
+ * Does NOT redirect to login.html.
+ */
 export function getShatteredAuth() {
   if (_authPromise) return _authPromise;
 
@@ -55,32 +59,35 @@ export function getShatteredAuth() {
       ensureFirebase();
     } catch (err) {
       console.error("Firebase init error in auth-guard:", err);
-      // Redirect to login with a meaningful notice
-      sessionStorage.setItem("shattered-redirect", window.location.href);
-      window.location.replace("./login.html");
+      // Return null user so app still boots in public mode
+      resolve({ user: null, auth: null, db: null });
       return;
     }
 
     const unsubscribe = onAuthStateChanged(_auth, user => {
-      unsubscribe(); // Only need the first resolution
-      if (!user) {
-        // Not authenticated — save the intended destination and send to login
-        sessionStorage.setItem("shattered-redirect", window.location.href);
-        window.location.replace("./login.html");
-        return;
-      }
-      _resolvedUser = user;
-      resolve({ user, auth: _auth, db: _db });
+      unsubscribe();
+      _resolvedUser = user ?? null;
+      resolve({ user: _resolvedUser, auth: _auth, db: _db });
     });
   });
 
   return _authPromise;
 }
 
-/* ── Continue watching auth state changes (e.g. token revocation) ───────── */
+/* ── Continue watching auth state changes ────────────────────────────────── */
 export function watchAuthState(onChange) {
   ensureFirebase();
   return onAuthStateChanged(_auth, onChange);
+}
+
+/* ── Require sign-in — call this when a protected action is attempted ──── */
+/**
+ * Saves the current URL to sessionStorage and redirects to login.html.
+ * Use this instead of a login wall on page load.
+ */
+export function requireAuth() {
+  sessionStorage.setItem("shattered-redirect", window.location.href);
+  window.location.replace("./login.html");
 }
 
 /* ── Sign out ─────────────────────────────────────────────────────────────── */
@@ -89,15 +96,15 @@ export async function signOutUser() {
   try {
     await signOut(_auth);
   } catch (_) {}
-  window.location.replace("./login.html");
+  window.location.replace("./index.html");
 }
 
-/* ── Get the currently cached user (sync, may be null before guard resolves) */
+/* ── Get the currently cached user (sync, may be null) ─────────────────── */
 export function getCurrentUser() {
   return _resolvedUser;
 }
 
-/* ── Firestore: upsert user profile (called from app.js after guard) ─────── */
+/* ── Firestore: upsert user profile (called from app.js after auth) ─────── */
 export async function upsertUserProfile(user, extraData = {}) {
   if (!_db || !user) return;
   try {

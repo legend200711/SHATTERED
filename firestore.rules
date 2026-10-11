@@ -14,11 +14,12 @@ service cloud.firestore {
     }
 
     // ── Users collection ─────────────────────────────────────────────────
-    // Users can read any public profile.
-    // Users can only create/update their own profile.
-    // Protected fields (uid, accountStatus, createdAt) cannot be changed by users.
+    // Public visitors can read public artist profiles (displayName, bio, photoURL).
+    // Only the account owner can create or update their own document.
+    // Protected fields (uid, accountStatus, createdAt) cannot be changed.
     match /users/{uid} {
-      allow read: if isAuthed();
+      // Public read — any visitor can view artist profiles
+      allow read: if true;
 
       allow create: if isOwner(uid)
         && request.resource.data.uid == uid
@@ -35,13 +36,13 @@ service cloud.firestore {
     }
 
     // ── Tracks ───────────────────────────────────────────────────────────
-    // Published tracks are readable by any authenticated user.
-    // Unpublished/draft tracks are only readable by the owner.
+    // Published tracks are readable by everyone, including public visitors.
+    // Drafts and private tracks are only readable by the owner.
+    // Only authenticated users can upload; only owners can edit or delete.
     match /tracks/{trackId} {
-      allow read: if isAuthed() && (
-        resource.data.publicationStatus == "published" ||
-        isOwnerOf(resource)
-      );
+      allow read: if (
+        resource.data.publicationStatus == "published"
+      ) || isOwnerOf(resource);
 
       allow create: if isAuthed()
         && request.resource.data.ownerUid == request.auth.uid
@@ -57,8 +58,10 @@ service cloud.firestore {
     }
 
     // ── Lyrics ───────────────────────────────────────────────────────────
+    // Public visitors can read all published lyrics.
+    // Only authenticated users can create/edit/delete.
     match /lyrics/{lyricId} {
-      allow read:   if isAuthed();
+      allow read:   if true;
       allow create: if isAuthed()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.title.size() <= 100;
@@ -68,8 +71,9 @@ service cloud.firestore {
     }
 
     // ── Collaboration calls ───────────────────────────────────────────────
+    // Public visitors can read all collab calls.
     match /collabs/{collabId} {
-      allow read:   if isAuthed();
+      allow read:   if true;
       allow create: if isAuthed()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.title.size() <= 100;
@@ -79,8 +83,10 @@ service cloud.firestore {
     }
 
     // ── Community posts ───────────────────────────────────────────────────
+    // Public visitors can read all posts.
+    // Only authenticated users can create posts or like them.
     match /posts/{postId} {
-      allow read: if isAuthed();
+      allow read: if true;
 
       allow create: if isAuthed()
         && request.resource.data.ownerUid == request.auth.uid
@@ -103,6 +109,7 @@ service cloud.firestore {
 
     // ── Private messages (future feature) ────────────────────────────────
     // Conversations: both participants must be members.
+    // Always requires authentication — private by design.
     match /conversations/{conversationId} {
       allow read, write: if isAuthed()
         && request.auth.uid in resource.data.memberUids;
@@ -113,7 +120,7 @@ service cloud.firestore {
       }
     }
 
-    // ── Notifications (per-user) ──────────────────────────────────────────
+    // ── Notifications (per-user, private) ────────────────────────────────
     match /notifications/{uid}/items/{notifId} {
       allow read, write: if isOwner(uid);
     }

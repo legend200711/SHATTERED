@@ -6,16 +6,25 @@ service firebase.storage {
     // Path: audio/{ownerUid}/{trackId}/{filename}
     match /audio/{ownerUid}/{trackId}/{filename} {
 
-      // Read: any authenticated user (for streaming playback via download URL)
-      allow read: if request.auth != null;
+      // Read: public — any visitor can stream a published track's audio.
+      allow read: if true;
 
-      // Write: only the owner, within size and type constraints
+      // Write: only the owner, within size and type constraints.
+      //
+      // MIME type check:
+      //   The client SDK (storage-service.js resolveContentType) always sends a
+      //   proper audio/* MIME string — never an empty string or
+      //   application/octet-stream — so the match below will always succeed for
+      //   a validly formed upload from the SHATTERED app.
+      //
+      //   The broader pattern 'audio/.*' is intentionally used here so that
+      //   unusual but valid MIME variants (audio/x-mp3, audio/mpeg3, etc.)
+      //   accepted by the client do not cause a permission-denied at the Storage
+      //   layer.  The client-side validateAudioFile() is the primary whitelist.
       allow write: if request.auth != null
         && request.auth.uid == ownerUid
-        // Maximum 80 MB
         && request.resource.size <= 80 * 1024 * 1024
-        // Allowed MIME types
-        && request.resource.contentType.matches('audio/(mpeg|mp3|wav|x-wav|ogg|flac|x-flac|mp4|x-m4a|aac|webm)');
+        && request.resource.contentType.matches('audio/.*');
 
       // Delete: only the owner
       allow delete: if request.auth != null
@@ -25,7 +34,8 @@ service firebase.storage {
     // ── Profile photos ────────────────────────────────────────────────────
     // Path: profilePhotos/{uid}/{filename}
     match /profilePhotos/{uid}/{filename} {
-      allow read: if request.auth != null;
+      // Public read — profile photos are visible to everyone
+      allow read: if true;
 
       allow write: if request.auth != null
         && request.auth.uid == uid

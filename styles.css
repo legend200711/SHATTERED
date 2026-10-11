@@ -22,3 +22,45 @@
 .check-row input{margin-top:2px;accent-color:var(--blue);flex-shrink:0}
 /* ── Toast show state ───────────────────────────────────────────────────── */
 #toast.show{opacity:1;transform:translateY(0)}
+
+/* ── Auth gate modal ─────────────────────────────────────────────────────── */
+.auth-gate-overlay{position:fixed;inset:0;z-index:200;background:#000000cc;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-gate-box{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:36px 32px;max-width:420px;width:100%;text-align:center}
+.auth-gate-box:focus{outline:none}
+.auth-gate-icon{font-size:42px;font-weight:900;font-style:italic;color:var(--blue);text-shadow:3px 2px 0 #254d62;letter-spacing:-.08em;margin-bottom:14px}
+.auth-gate-icon span{color:var(--green)}
+.auth-gate-box h2{margin:0 0 10px;font-size:20px}
+.auth-gate-box p{color:var(--muted);font-size:13px;margin:0 0 10px}
+.auth-gate-note{color:var(--green)!important;font-size:12px!important;margin-bottom:20px!important}
+.auth-gate-actions{display:flex;flex-direction:column;gap:10px}
+.auth-gate-actions .btn{text-decoration:none;display:block}
+/* ── Auth required panel (inline, non-modal) ─────────────────────────────── */
+.auth-required-panel{text-align:center;padding:40px 28px;max-width:480px;margin:0 auto}
+.auth-required-panel h2{margin:10px 0 12px}
+.auth-required-panel p{color:var(--muted);font-size:13px;margin-bottom:22px}
+.auth-required-panel .hero-buttons{justify-content:center}
+/* ── Guest actions in topbar ─────────────────────────────────────────────── */
+.guest-actions{display:flex;align-items:center;gap:10px}
+.btn-sm{padding:8px 14px;font-size:12px}
+/* ── Sidebar sign-in prompt ──────────────────────────────────────────────── */
+.sidebar-signin{margin-top:18px;padding:14px;background:var(--panel2);border-radius:12px;border:1px solid var(--line)}
+.sidebar-signin p{font-size:11px;color:var(--muted);margin:0;line-height:1.5}
+@media(max-width:760px){.guest-actions .btn-sm:first-child{display:none}.auth-gate-box{padding:28px 18px}}
+
+/* ── Upload overlay (body-level, immune to #main re-renders) ─────────────── */
+.upload-overlay{position:fixed;inset:0;z-index:300;background:#000000dd;display:flex;align-items:center;justify-content:center;padding:20px}
+.upload-overlay-box{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:36px 32px;max-width:440px;width:100%;text-align:center}
+.upload-overlay-brand{font-size:40px;font-weight:900;font-style:italic;color:var(--blue);text-shadow:3px 2px 0 #254d62;letter-spacing:-.08em;margin-bottom:10px}
+.upload-overlay-brand span{color:var(--green)}
+.upload-overlay-title{margin:0 0 6px;font-size:20px}
+.upload-overlay-track{color:var(--muted);font-size:13px;margin:0 0 18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.upload-overlay-sep{margin:0 6px;opacity:.5}
+.upload-overlay-status{font-size:14px;color:var(--blue);margin-bottom:10px;min-height:1.4em;transition:color .2s}
+.upload-overlay-status.upload-status-error{color:#ff7070}
+.upload-overlay-bar{margin:0 0 6px}
+.upload-overlay-pct{font-size:12px;color:var(--muted);margin-bottom:20px}
+.upload-overlay-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.upload-overlay-actions .btn{min-width:120px}
+.upload-overlay-error{color:#ff9070;font-size:12px;line-height:1.5;margin-top:14px;padding:10px 12px;background:#1f0f0a;border-radius:8px;text-align:left}
+.upload-cancel-btn{opacity:.75}
+.upload-cancel-btn:hover{opacity:1}
