@@ -1,0 +1,176 @@
+/**
+ * firestore-service.js — Firestore data operations for SHATTERED
+ *
+ * Replaces direct Firebase Realtime Database calls from app.js.
+ * Uses Firestore for track metadata, lyrics, collabs, posts, and user profiles.
+ * Audio blobs remain in local IndexedDB; metadata goes to Firestore.
+ *
+ * Security note: every write operation tags the document with the
+ * authenticated user's UID so Firestore Security Rules can enforce ownership.
+ */
+
+import {
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  deleteDoc,
+  getDocs,
+  getDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  serverTimestamp,
+  where,
+  increment,
+} from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+import { getApps, initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
+import { firebaseConfig }         from "./firebase-config.js";
+
+/* ── Singleton Firestore instance ────────────────────────────────────────── */
+let _db = null;
+
+function getDB() {
+  if (_db) return _db;
+  const apps = getApps();
+  const app  = apps.length ? apps[0] : initializeApp(firebaseConfig);
+  _db = getFirestore(app);
+  return _db;
+}
+
+/* ── Generic helpers ─────────────────────────────────────────────────────── */
+
+/** Subscribe to a top-level collection, sorted by createdAt desc. */
+export function subscribeCollection(collectionName, callback) {
+  try {
+    const db = getDB();
+    const q  = query(
+      collection(db, collectionName),
+      orderBy("createdAt", "desc")
+    );
+    return onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      callback(docs);
+    }, err => {
+      console.warn(`Firestore listener [${collectionName}] error:`, err);
+      callback([]);
+    });
+  } catch (err) {
+    console.warn(`Could not subscribe to Firestore [${collectionName}]:`, err);
+    return () => {}; // no-op unsubscribe
+  }
+}
+
+/** Write (merge) a document. */
+export async function fsSet(collectionName, id, data) {
+  const db = getDB();
+  await setDoc(doc(db, collectionName, id), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+/** Delete a document. */
+export async function fsDelete(collectionName, id) {
+  const db = getDB();
+  await deleteDoc(doc(db, collectionName, id));
+}
+
+/* ── Tracks ──────────────────────────────────────────────────────────────── */
+
+/**
+ * Save track metadata to Firestore.
+ * Audio blob stays in local IndexedDB — never written to Firestore.
+ */
+export async function saveTrackMeta(trackMeta, ownerUid) {
+  const db   = getDB();
+  const data = {
+    ...trackMeta,
+    ownerUid,
+    publicationStatus: "published",
+    createdAt:         serverTimestamp(),
+    updatedAt:         serverTimestamp(),
+  };
+  await setDoc(doc(db, "tracks", trackMeta.id), data);
+}
+
+/** Delete a track (only if caller is the owner — enforced by Security Rules). */
+export async function deleteTrack(trackId) {
+  await fsDelete("tracks", trackId);
+}
+
+/* ── Lyrics ──────────────────────────────────────────────────────────────── */
+
+export async function saveLyrics(item, ownerUid) {
+  const db = getDB();
+  await setDoc(doc(db, "lyrics", item.id), {
+    ...item,
+    ownerUid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteLyrics(id) {
+  await fsDelete("lyrics", id);
+}
+
+/* ── Collaborations ──────────────────────────────────────────────────────── */
+
+export async function saveCollab(item, ownerUid) {
+  const db = getDB();
+  await setDoc(doc(db, "collabs", item.id), {
+    ...item,
+    ownerUid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteCollab(id) {
+  await fsDelete("collabs", id);
+}
+
+/* ── Community posts ─────────────────────────────────────────────────────── */
+
+export async function savePost(item, ownerUid) {
+  const db = getDB();
+  await setDoc(doc(db, "posts", item.id), {
+    ...item,
+    ownerUid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deletePost(id) {
+  await fsDelete("posts", id);
+}
+
+export async function likePost(id) {
+  const db = getDB();
+  await updateDoc(doc(db, "posts", id), {
+    likes: increment(1),
+  });
+}
+
+/* ── User profiles ───────────────────────────────────────────────────────── */
+
+/** Fetch the public profile of any user by their UID. */
+export async function getUserProfile(uid) {
+  const db = getDB();
+  const snap = await getDoc(doc(db, "users", uid));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/** Update the authenticated user's own editable profile fields. */
+export async function updateOwnProfile(uid, { displayName, bio, photoURL }) {
+  const db   = getDB();
+  const data = { updatedAt: serverTimestamp() };
+  if (displayName !== undefined) data.displayName = displayName;
+  if (bio         !== undefined) data.bio         = bio;
+  if (photoURL    !== undefined) data.photoURL    = photoURL;
+  await setDoc(doc(db, "users", uid), data, { merge: true });
+}

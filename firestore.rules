@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ─────────────────────────────────────────────────
+    function isAuthed() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function isOwnerOf(resource) {
+      return request.auth != null && request.auth.uid == resource.data.ownerUid;
+    }
+
+    // ── Users collection ─────────────────────────────────────────────────
+    // Users can read any public profile.
+    // Users can only create/update their own profile.
+    // Protected fields (uid, accountStatus, createdAt) cannot be changed by users.
+    match /users/{uid} {
+      allow read: if isAuthed();
+
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.accountStatus == "active"
+        && request.resource.data.keys().hasAll(["uid", "email", "displayName", "createdAt"]);
+
+      allow update: if isOwner(uid)
+        // Deny changes to privileged fields
+        && !("accountStatus" in request.resource.data.diff(resource.data).affectedKeys())
+        && !("uid" in request.resource.data.diff(resource.data).affectedKeys())
+        && !("createdAt" in request.resource.data.diff(resource.data).affectedKeys());
+
+      allow delete: if false; // Deletion handled by Cloud Functions with cleanup
+    }
+
+    // ── Tracks ───────────────────────────────────────────────────────────
+    // Published tracks are readable by any authenticated user.
+    // Unpublished/draft tracks are only readable by the owner.
+    match /tracks/{trackId} {
+      allow read: if isAuthed() && (
+        resource.data.publicationStatus == "published" ||
+        isOwnerOf(resource)
+      );
+
+      allow create: if isAuthed()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.keys().hasAll(["ownerUid", "title", "artist"])
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.artist.size() <= 80;
+
+      allow update: if isOwnerOf(resource)
+        // Owner cannot change ownerUid or re-assign the track
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      allow delete: if isOwnerOf(resource);
+    }
+
+    // ── Lyrics ───────────────────────────────────────────────────────────
+    match /lyrics/{lyricId} {
+      allow read:   if isAuthed();
+      allow create: if isAuthed()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.title.size() <= 100;
+      allow update: if isOwnerOf(resource)
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isOwnerOf(resource);
+    }
+
+    // ── Collaboration calls ───────────────────────────────────────────────
+    match /collabs/{collabId} {
+      allow read:   if isAuthed();
+      allow create: if isAuthed()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.title.size() <= 100;
+      allow update: if isOwnerOf(resource)
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isOwnerOf(resource);
+    }
+
+    // ── Community posts ───────────────────────────────────────────────────
+    match /posts/{postId} {
+      allow read: if isAuthed();
+
+      allow create: if isAuthed()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.body.size() <= 2000;
+
+      // Owners may edit their own post; anyone authenticated may increment likes only
+      allow update: if isAuthed() && (
+        (
+          isOwnerOf(resource)
+          && request.resource.data.ownerUid == resource.data.ownerUid
+        ) || (
+          // Like-only update: only the `likes` field changed, by +1
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["likes"])
+          && request.resource.data.likes == resource.data.likes + 1
+        )
+      );
+
+      allow delete: if isOwnerOf(resource);
+    }
+
+    // ── Private messages (future feature) ────────────────────────────────
+    // Conversations: both participants must be members.
+    match /conversations/{conversationId} {
+      allow read, write: if isAuthed()
+        && request.auth.uid in resource.data.memberUids;
+
+      match /messages/{messageId} {
+        allow read, write: if isAuthed()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.memberUids;
+      }
+    }
+
+    // ── Notifications (per-user) ──────────────────────────────────────────
+    match /notifications/{uid}/items/{notifId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // ── Block-list everything else ────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

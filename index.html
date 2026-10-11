@@ -12,7 +12,24 @@
 <header class="topbar">
   <button class="brand" data-page="home" aria-label="SHATTERED home"><span class="brand-mark">S<span>/</span></span><span>SHATTERED<small>MUSIC WITHOUT LIMITS</small></span></button>
   <label class="search"><span>⌕</span><input id="globalSearch" placeholder="Search tracks, creators, lyrics…" autocomplete="off"></label>
-  <div class="top-actions"><button class="icon-btn" data-page="notifications" aria-label="Notifications">♧<i id="notificationDot"></i></button><button class="avatar" id="profileShortcut" aria-label="My profile">YOU</button></div>
+  <div class="top-actions">
+    <button class="icon-btn" data-page="notifications" aria-label="Notifications">♧<i id="notificationDot"></i></button>
+    <!-- Profile menu trigger -->
+    <div class="profile-menu-wrap" id="profileMenuWrap">
+      <button class="avatar" id="profileAvatarBtn" aria-label="Account menu" aria-haspopup="true" aria-expanded="false">YOU</button>
+      <div class="profile-dropdown" id="profileDropdown" hidden>
+        <div class="profile-dropdown-user">
+          <strong id="profileDropdownName">—</strong>
+          <small id="profileDropdownEmail">—</small>
+        </div>
+        <hr class="profile-dropdown-line">
+        <button class="profile-dropdown-item" data-page="profile">◌ My profile</button>
+        <button class="profile-dropdown-item" data-page="upload">＋ Upload music</button>
+        <hr class="profile-dropdown-line">
+        <button class="profile-dropdown-item danger" id="signOutBtn">⎋ Sign out</button>
+      </div>
+    </div>
+  </div>
 </header>
 <div class="layout">
 <aside class="sidebar">
@@ -52,29 +69,6 @@
 <div class="player" id="player" hidden><div class="player-track"><div class="mini-cover" id="playerCover">S/</div><div><b id="playerTitle">No track selected</b><small id="playerArtist">Choose a track to play</small></div></div><div class="player-controls"><button id="prevTrack" aria-label="Previous track">|◀</button><button id="togglePlay" class="play-round" aria-label="Play or pause">▶</button><button id="nextTrack" aria-label="Next track">▶|</button></div><div class="player-timeline"><span id="currentTime">0:00</span><input id="seek" type="range" min="0" max="100" value="0" aria-label="Seek"><span id="duration">0:00</span></div><button class="icon-btn" id="closePlayer" aria-label="Close player">×</button><audio id="audio" preload="metadata"></audio></div>
 <div id="toast" role="status" aria-live="polite"></div>
 </div>
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp }    from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
-  import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-analytics.js";
-  import { getDatabase }      from "https://www.gstatic.com/firebasejs/11.9.1/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey:            "AIzaSyB2M8sgU__2s0oVa5y4-s1S294aP5CBdeQ",
-    authDomain:        "remix-studio-4bf8a.firebaseapp.com",
-    databaseURL:       "https://remix-studio-4bf8a-default-rtdb.firebaseio.com",
-    projectId:         "remix-studio-4bf8a",
-    storageBucket:     "remix-studio-4bf8a.firebasestorage.app",
-    messagingSenderId: "220851113113",
-    appId:             "1:220851113113:web:bb3cd4e44f478d3925fc08",
-    measurementId:     "G-GM0JCC3BGW"
-  };
-
-  const app       = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-  const rtdb      = getDatabase(app);
-
-  // Expose to app.js (non-module IIFE)
-  window.__shatteredFB = { analytics, rtdb, logEvent };
-</script>
-<script src="./app.js" defer></script>
+<!-- Auth guard + app — loaded as ES module so import/export works -->
+<script type="module" src="./app.js"></script>
 </body></html>
