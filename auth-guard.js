@@ -19,6 +19,7 @@ import {
   setPersistence,
   onAuthStateChanged,
   signOut,
+  updateProfile,
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
 import {
   getFirestore,
@@ -134,4 +135,16 @@ export async function upsertUserProfile(user, extraData = {}) {
   } catch (err) {
     console.warn("Could not upsert user profile:", err);
   }
+}
+
+/* ── Update Firebase Auth display name ───────────────────────────────────── */
+/**
+ * Update the Firebase Auth user's displayName.
+ * This keeps `currentUser.displayName` (the Auth user object) in sync with
+ * the Firestore profile's displayName field so every re-render of profileView()
+ * shows the latest saved name without a separate Firestore fetch.
+ */
+export async function updateAuthDisplayName(user, displayName) {
+  if (!user || !displayName) return;
+  await updateProfile(user, { displayName });
 }

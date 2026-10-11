@@ -1,0 +1,24 @@
+[
+  {
+    "origin": [
+      "https://legend200711.github.io",
+      "http://localhost",
+      "http://localhost:5000",
+      "http://localhost:5001",
+      "http://localhost:8080",
+      "https://remix-studio-4bf8a.firebaseapp.com",
+      "https://remix-studio-4bf8a.web.app"
+    ],
+    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Disposition",
+      "Authorization",
+      "X-Requested-With",
+      "X-Goog-Upload-Status",
+      "X-Goog-Upload-URL"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -43,6 +43,7 @@ import {
   upsertUserProfile,
   watchAuthState,
   requireAuth,
+  updateAuthDisplayName,
 } from "./auth-guard.js";
 import {
   subscribeCollection,
@@ -74,6 +75,16 @@ let currentUser = null;   // Firebase Auth user, null for public visitors
 let firestoreUnsubscribes = [];
 
 /**
+ * profileCache — holds the latest saved profile values for the signed-in user.
+ * Populated by loadProfileCache() which reads the Firestore users/{uid} document.
+ * profileView() reads from here so it always shows the persisted values, not
+ * the potentially-stale Firebase Auth user object or localStorage.
+ *
+ * null = not yet loaded; {} = loaded (may have empty strings for new accounts)
+ */
+let profileCache = null;
+
+/**
  * uploadState — tracks an active upload so Firestore snapshot callbacks
  * cannot destroy the upload UI by calling setPage()/renderHome().
  *
@@ -95,6 +106,40 @@ function all(store){return new Promise((resolve,reject)=>{const r=db.transaction
 function put(store,item){return new Promise((resolve,reject)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(item);tx.oncomplete=()=>resolve(item);tx.onerror=()=>reject(tx.error);});}
 function remove(store,id){return new Promise((resolve,reject)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).delete(id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}
 const uid=()=>`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`;
+
+// ── Profile cache ────────────────────────────────────────────────────────────
+/**
+ * Load the signed-in user's Firestore profile into profileCache.
+ * Falls back gracefully: if Firestore is unavailable the cache is seeded from
+ * the Firebase Auth user object and localStorage so the UI still shows something.
+ *
+ * Calling this again always does a fresh Firestore fetch so the profile page
+ * reflects changes made from another device/browser.
+ */
+async function loadProfileCache() {
+  if (!currentUser) { profileCache = null; return; }
+
+  // Seed immediately from Auth + localStorage so profileView() can render
+  // without waiting for the network — will be overwritten on success.
+  profileCache = {
+    displayName: currentUser.displayName || currentUser.email?.split("@")[0] || "Creator",
+    bio:         localStorage.getItem(`shattered-bio-${currentUser.uid}`) || "",
+  };
+
+  try {
+    const remote = await getUserProfile(currentUser.uid);
+    if (remote) {
+      // Prefer Firestore values; fall back to Auth / localStorage for empty strings
+      profileCache.displayName = remote.displayName || profileCache.displayName;
+      profileCache.bio         = remote.bio         ?? profileCache.bio;
+      // Keep localStorage in sync so the old code path still works as a fallback
+      localStorage.setItem(`shattered-bio-${currentUser.uid}`, profileCache.bio);
+    }
+  } catch (err) {
+    // Network / permission error — keep the seed values already set above
+    console.warn("Could not load Firestore profile:", err);
+  }
+}
 
 // ── Auth gate modal ──────────────────────────────────────────────────────────
 /**
@@ -136,8 +181,12 @@ function showAuthGate(featureDescription) {
 
 // ── Header: update for auth state ────────────────────────────────────────────
 function updateHeader(user) {
-  const guestActions = $("#guestActions");
-  const profileWrap  = $("#profileMenuWrap");
+  // Remove the loading state so the nav becomes visible.
+  // This runs once auth is resolved (signed in OR confirmed signed out).
+  document.body.removeAttribute("data-auth-state");
+
+  const guestActions  = $("#guestActions");
+  const profileWrap   = $("#profileMenuWrap");
   const sidebarSignin = $("#sidebarSignin");
   if (user) {
     if (guestActions)   guestActions.hidden   = true;
@@ -291,6 +340,12 @@ function setPage(page){
   $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   $$(".mobile-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   const views={home:homeView,music:musicView,videos:videosView,lyrics:lyricsView,collab:collabView,feed:feedView,messages:messagesView,notifications:notificationsView,upload:uploadView,profile:profileView};
+
+  // When navigating to the profile page, invalidate the cache so that the
+  // latest Firestore values are fetched. profileView() handles the async load
+  // by showing a brief "Loading…" state and re-rendering when data arrives.
+  if (page === "profile" && currentUser) profileCache = null;
+
   main.innerHTML=(views[page]||homeView)();
   bindForms();
   main.focus({preventScroll:true});
@@ -368,12 +423,26 @@ function profileView(){
       </div>
     </div>`;
   }
-  const name = currentUser?.displayName || currentUser?.email?.split("@")[0] || "Creator";
-  const email = currentUser?.email || "";
-  const savedBio = localStorage.getItem(`shattered-bio-${currentUser?.uid}`) || "Independent creator. Breaking the expected.";
+
+  // Use profileCache (sourced from Firestore) so saved values are always shown.
+  // If the cache hasn't been loaded yet, trigger a background load and re-render;
+  // the UI will show a brief "Loading…" state for new page visits.
+  if (!profileCache) {
+    loadProfileCache().then(() => {
+      // Re-render only if we're still on the profile page
+      const activePage = $$("[data-page].active")[0]?.dataset.page;
+      if (activePage === "profile") setPage("profile");
+    });
+    return `<div class="eyebrow">YOUR CREATOR IDENTITY</div><h1 class="page-title">My profile</h1><div class="panel" style="text-align:center;padding:32px"><p style="color:var(--muted)">Loading profile…</p></div>`;
+  }
+
+  // Read display values from profileCache (Firestore-backed)
+  const name     = profileCache.displayName || "Creator";
+  const bio      = profileCache.bio || "";
+  const email    = currentUser?.email || "";
   const myTracks = tracks.filter(t => t.ownerUid === currentUser?.uid);
   const myLyrics = lyrics.filter(l => l.ownerUid === currentUser?.uid);
-  return `<div class="eyebrow">YOUR CREATOR IDENTITY</div><h1 class="page-title">My profile</h1><div class="profile-banner"><div class="profile-big">${esc(name.slice(0,1).toUpperCase())}</div><div><h2>${esc(name)}</h2><p style="color:var(--muted);font-size:13px">${esc(email)}</p><p>${esc(savedBio)}</p><p style="margin-top:9px">${myTracks.length} tracks · ${myLyrics.length} lyric sheets</p></div></div><form id="profileForm" class="panel"><h2>Edit your profile</h2><div class="form-grid"><div class="field"><label>Artist / creator name</label><input name="name" required maxlength="80" value="${esc(name)}"></div><div class="field full"><label>Bio</label><textarea name="bio" maxlength="500">${esc(savedBio)}</textarea></div><div class="field full"><button class="btn primary">Save profile</button></div></div></form><div class="panel"><h3>Your music</h3><div class="track-grid">${myTracks.length?myTracks.map(trackCard).join(""):`<p class="page-intro">Your uploaded tracks will appear here.</p>`}</div></div><div class="panel"><h3>Privacy & storage</h3><p class="page-intro">Track metadata, lyrics, collabs, and posts are stored in the SHATTERED community cloud. Audio is uploaded to secure cloud storage. Export your text data at any time.</p><button class="btn outline" id="exportData">Export my text data</button> <button class="btn outline" id="clearData">Clear local data</button></div>`;
+  return `<div class="eyebrow">YOUR CREATOR IDENTITY</div><h1 class="page-title">My profile</h1><div class="profile-banner"><div class="profile-big">${esc(name.slice(0,1).toUpperCase())}</div><div><h2 id="profileBannerName">${esc(name)}</h2><p style="color:var(--muted);font-size:13px">${esc(email)}</p><p id="profileBannerBio">${esc(bio)}</p><p style="margin-top:9px">${myTracks.length} tracks · ${myLyrics.length} lyric sheets</p></div></div><form id="profileForm" class="panel"><h2>Edit your profile</h2><div class="form-grid"><div class="field"><label>Artist / creator name</label><input id="profileNameInput" name="name" required maxlength="80" value="${esc(name)}"></div><div class="field full"><label>Bio</label><textarea id="profileBioInput" name="bio" maxlength="500">${esc(bio)}</textarea></div><div class="field full" id="profileSaveError" style="color:#ff7070;font-size:13px;display:none"></div><div class="field full"><button class="btn primary" id="profileSaveBtn">Save profile</button></div></div></form><div class="panel"><h3>Your music</h3><div class="track-grid">${myTracks.length?myTracks.map(trackCard).join(""):`<p class="page-intro">Your uploaded tracks will appear here.</p>`}</div></div><div class="panel"><h3>Privacy & storage</h3><p class="page-intro">Track metadata, lyrics, collabs, and posts are stored in the SHATTERED community cloud. Audio is uploaded to secure cloud storage. Export your text data at any time.</p><button class="btn outline" id="exportData">Export my text data</button> <button class="btn outline" id="clearData">Clear local data</button></div>`;
 }
 
 function videosView(){return `<div class="eyebrow">VISUALS MEET SOUND</div><h1 class="page-title">Music videos</h1><p class="page-intro">Share finished music videos, including AI-generated visuals. SHATTERED's policy is not to provide fake-singer lip-sync generation that presents a fictional person as actually singing.</p><div class="panel"><h2>Video sharing status</h2><p class="page-intro">This build supports audio uploads. Video upload and cloud playback require dedicated storage and streaming delivery. Implementation is planned.</p><button class="btn primary" data-page="upload">Upload a track instead</button></div><div class="empty-state"><b>Video library is a planned module.</b>Next: MP4/WebM uploads, video metadata, poster images, playback, and moderation controls.</div>`;}
@@ -584,17 +653,56 @@ function bindForms(){
   if(prof)prof.onsubmit=async e=>{
     e.preventDefault();
     if (!currentUser) return;
-    const f=new FormData(prof);
+    const f    = new FormData(prof);
     const name = f.get("name").trim();
     const bio  = f.get("bio").trim();
-    localStorage.setItem(`shattered-bio-${currentUser.uid}`, bio);
+
+    if (!name) { toast("Enter an artist / creator name."); return; }
+
+    // Disable the save button and hide any previous error while saving
+    const saveBtn  = document.getElementById("profileSaveBtn");
+    const errorDiv = document.getElementById("profileSaveError");
+    if (saveBtn)  { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
+    if (errorDiv) { errorDiv.style.display = "none"; errorDiv.textContent = ""; }
+
     try {
+      // ── 1. Write to Firestore (source of truth) ──────────────────────────
       await updateOwnProfile(currentUser.uid, { displayName: name, bio });
+
+      // ── 2. Update Firebase Auth display name so currentUser.displayName
+      //        stays in sync — this is what auth-guard and the header read.
+      await updateAuthDisplayName(currentUser, name);
+
+      // ── 3. Update the in-memory cache so profileView() immediately
+      //        renders the new values without another Firestore round-trip.
+      profileCache = { ...(profileCache || {}), displayName: name, bio };
+
+      // ── 4. Keep localStorage in sync for offline/fallback reads.
+      localStorage.setItem(`shattered-bio-${currentUser.uid}`, bio);
+
+      // ── 5. Update the header avatar abbreviation (name may have changed).
+      updateProfileMenu(currentUser);
+
+      // ── 6. Update the banner and form values in-place (no page destroy).
+      //        This avoids losing scroll position and immediately reflects the
+      //        saved values without a full setPage() re-render.
+      const bannerName = document.getElementById("profileBannerName");
+      const bannerBio  = document.getElementById("profileBannerBio");
+      if (bannerName) bannerName.textContent = name;
+      if (bannerBio)  bannerBio.textContent  = bio;
+
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save profile"; }
       toast("Profile saved.");
-    } catch(err) {
-      toast("Profile saved locally. Cloud sync failed — check connection.");
+    } catch (err) {
+      // ── Save failed — surface the real error, preserve the form values ──
+      console.error("Profile save error:", err);
+      const msg = err?.code === "permission-denied"
+        ? "Save failed: permission denied. Make sure you are signed in and try again."
+        : `Save failed: ${err?.message || "unknown error"}. Your edits have not been lost.`;
+      if (errorDiv) { errorDiv.textContent = msg; errorDiv.style.display = ""; }
+      if (saveBtn)  { saveBtn.disabled = false; saveBtn.textContent = "Save profile"; }
+      // Do NOT toast "saved" — do NOT call setPage — the form stays open with the user's edits intact.
     }
-    setPage("profile");
   };
 }
 
@@ -745,6 +853,8 @@ async function init(){
     const blobMap = new Map(localTracks.map(t=>[t.id, t.blob]));
 
     // ── Resolve Firebase auth — public visitors get null user ──────────────
+    // getShatteredAuth() resolves once with the current user (or null).
+    // We do NOT call watchAuthState here yet — see below.
     let authResult;
     try {
       authResult = await getShatteredAuth();
@@ -754,23 +864,16 @@ async function init(){
     }
     currentUser = authResult.user;
 
-    // Update header for the current auth state
+    // Update header — this clears the loading state and shows the correct nav
     updateHeader(currentUser);
     bindProfileMenu();
 
     if (currentUser) {
-      // Signed-in: upsert Firestore profile
+      // Signed-in: upsert Firestore profile (creates if new, updates timestamps)
       await upsertUserProfile(currentUser);
+      // Pre-load the profile cache so the profile page renders instantly
+      await loadProfileCache();
     }
-
-    // Watch for sign-in / sign-out while the app is open
-    watchAuthState(user => {
-      currentUser = user ?? null;
-      updateHeader(currentUser);
-      // Re-render current page to reflect auth change
-      const activePage = $$("[data-page].active")[0]?.dataset.page || "home";
-      setPage(activePage);
-    });
 
     // ── Subscribe to published Firestore collections (public read) ─────────
     firestoreUnsubscribes.push(
@@ -779,6 +882,9 @@ async function init(){
         tracks = remoteArr
           .filter(t => t.publicationStatus === "published")
           .map(t => ({ ...t, blob: blobMap.get(t.id) || null }));
+        // Don't re-render while an upload overlay is active (the overlay
+        // is attached to document.body and is safe, but renderHome() would
+        // replace #main content the user might be reading)
         renderHome(); updateCounts();
       }),
       subscribeCollection("lyrics",  arr => { lyrics  = arr; renderHome(); }),
@@ -787,6 +893,46 @@ async function init(){
     );
 
     renderHome(); updateCounts(); bindForms();
+
+    // Watch for sign-in / sign-out events AFTER the initial render.
+    // watchAuthState fires immediately (Firebase always fires onAuthStateChanged
+    // upon subscription), so we skip the initial fire if the user hasn't changed.
+    // This prevents an unwanted double setPage() call on every page load.
+    let _authWatchInitialized = false;
+    watchAuthState(user => {
+      const newUser = user ?? null;
+
+      // Skip the immediate fire if auth state hasn't changed since boot
+      if (!_authWatchInitialized) {
+        _authWatchInitialized = true;
+        const sameUser = (newUser?.uid ?? null) === (currentUser?.uid ?? null);
+        if (sameUser) return; // No change — initial fire, nothing to do
+      }
+
+      const prevUid = currentUser?.uid ?? null;
+      currentUser = newUser;
+      // Clear profileCache when the user changes (sign-in, sign-out, or
+      // account switch) so profileView() fetches fresh data for the new user.
+      profileCache = null;
+      updateHeader(currentUser);
+
+      // Re-render current page to reflect auth change (sign-in or sign-out).
+      // Do NOT navigate away if an upload overlay is active — the user should
+      // not lose their upload progress because they signed in from another tab.
+      if (!uploadState) {
+        const activePage = $$("[data-page].active")[0]?.dataset.page || "home";
+        setPage(activePage);
+      } else {
+        // Auth changed during an active upload. If the user signed out,
+        // cancel the in-progress upload to avoid a permission error.
+        if (!newUser && prevUid) {
+          if (uploadState.cancel) uploadState.cancel();
+          uploadState = null;
+          removeUploadOverlay();
+          toast("You were signed out. Upload cancelled.");
+        }
+      }
+    });
 
     if("serviceWorker" in navigator && location.protocol !== "file:")
       navigator.serviceWorker.register("./sw.js").catch(err=>console.warn("PWA offline cache unavailable",err));

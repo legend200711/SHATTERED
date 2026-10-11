@@ -42,14 +42,28 @@ function getDB() {
 
 /* ── Generic helpers ─────────────────────────────────────────────────────── */
 
-/** Subscribe to a top-level collection, sorted by createdAt desc. */
+/**
+ * Subscribe to a top-level collection, sorted by createdAt desc.
+ *
+ * For the "tracks" collection the Firestore Security Rule only allows reads
+ * of documents whose publicationStatus == "published" (or owned by the
+ * requesting user). A query that could return non-published documents will
+ * be rejected entirely by Firestore for unsigned/unowned reads. We therefore
+ * add a `where("publicationStatus","==","published")` filter for "tracks" so
+ * the query always satisfies the security rule for public visitors.
+ */
 export function subscribeCollection(collectionName, callback) {
   try {
     const db = getDB();
-    const q  = query(
-      collection(db, collectionName),
-      orderBy("createdAt", "desc")
-    );
+
+    // Build query constraints — tracks require a publicationStatus filter
+    // so that the Firestore security rule is satisfied for signed-out visitors.
+    const constraints = [orderBy("createdAt", "desc")];
+    if (collectionName === "tracks") {
+      constraints.unshift(where("publicationStatus", "==", "published"));
+    }
+
+    const q = query(collection(db, collectionName), ...constraints);
     return onSnapshot(q, snap => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       callback(docs);

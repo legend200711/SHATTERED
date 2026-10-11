@@ -7,15 +7,15 @@
 <link rel="stylesheet" href="./styles.css">
 <title>SHATTERED — Music without limits</title>
 </head>
-<body>
+<body data-auth-state="loading">
 <div class="app-shell">
 <header class="topbar">
   <button class="brand" data-page="home" aria-label="SHATTERED home"><span class="brand-mark">S<span>/</span></span><span>SHATTERED<small>MUSIC WITHOUT LIMITS</small></span></button>
   <label class="search"><span>⌕</span><input id="globalSearch" placeholder="Search tracks, creators, lyrics…" autocomplete="off"></label>
   <div class="top-actions">
     <button class="icon-btn" data-page="notifications" aria-label="Notifications">♧<i id="notificationDot"></i></button>
-    <!-- Guest actions (shown when signed out) -->
-    <div class="guest-actions" id="guestActions">
+    <!-- Guest actions (shown when signed out; hidden while auth loads) -->
+    <div class="guest-actions" id="guestActions" hidden>
       <a href="./login.html" class="btn outline btn-sm">Sign in</a>
       <a href="./login.html" class="btn primary btn-sm">Join free</a>
     </div>
@@ -53,7 +53,7 @@
     <button class="nav-item" data-page="profile"><span>◌</span> My profile</button>
   </div>
   <div class="sidebar-note"><b>Every creator belongs.</b><p>Human-made, AI-assisted, and AI-generated music are welcome. Respect rights and credit collaborators.</p></div>
-  <div class="sidebar-signin" id="sidebarSignin"><a href="./login.html" class="btn primary" style="display:block;text-align:center;margin:0 0 8px;font-size:12px">Sign in / Join free</a><p>Create an account to upload music, publish lyrics, and build your artist profile.</p></div>
+  <div class="sidebar-signin" id="sidebarSignin" hidden><a href="./login.html" class="btn primary" style="display:block;text-align:center;margin:0 0 8px;font-size:12px">Sign in / Join free</a><p>Create an account to upload music, publish lyrics, and build your artist profile.</p></div>
 </aside>
 <main id="main" tabindex="-1">
 <section class="hero">
@@ -61,6 +61,7 @@
   <h1>YOUR SOUND.<br><em>YOUR RULES.</em></h1>
   <p>A home for independent musicians and AI music creators. Share tracks, publish lyrics, find collaborators, and be discovered on your terms.</p>
   <div class="hero-buttons"><button class="btn primary" data-page="upload">＋ Upload your music</button><button class="btn outline" data-page="music">Explore music ↗</button></div>
+  <!-- Initial hero upload CTA is replaced by renderHome() once auth resolves -->
   </div><div class="hero-art" aria-hidden="true"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="sound-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="art-core">S<span>/</span></div><div class="art-caption">BREAK THE<br>EXPECTED</div></div>
 </section>
 <div class="stats-strip"><div><b id="trackCount">0</b><span>TRACKS SHARED</span></div><div><b id="creatorCount">1</b><span>CREATORS</span></div><div><b>ALL</b><span>GENRES WELCOME</span></div><div><b>NO</b><span>AI MUSIC DISCRIMINATION</span></div></div>

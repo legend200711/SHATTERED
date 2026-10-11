@@ -1,10 +1,72 @@
-# SHATTERED — Cloudflare Pages Deployment Guide
+# SHATTERED — Deployment Guide
+
+> **Before you deploy:** complete the **Firebase Storage CORS setup** (step 0
+> below) or audio uploads will remain stuck at 0%.
 
 ## Prerequisites
 
-- A Cloudflare account (free tier is sufficient)
+- Firebase CLI installed: `npm install -g firebase-tools`
+- A Cloudflare account (free tier is sufficient, or use GitHub Pages)
 - The Firebase project configured as described in [README.md](./README.md)
 - Git installed locally
+
+---
+
+## Step 0 — Configure Firebase Storage CORS (required for uploads)
+
+Firebase Storage blocks cross-origin upload requests by default. Without this
+step, `uploadBytesResumable` will fail with a CORS error and the progress bar
+will remain at 0%.
+
+### What to do
+
+1. Install and log in to the Firebase CLI if you haven't already:
+
+   ```bash
+   npm install -g firebase-tools
+   firebase login
+   ```
+
+2. Apply the CORS rules from `cors.json` to your Storage bucket:
+
+   ```bash
+   gsutil cors set cors.json gs://remix-studio-4bf8a.firebasestorage.app
+   ```
+
+   Replace `remix-studio-4bf8a.firebasestorage.app` with your actual bucket
+   name if you changed it in `firebase-config.js`.
+
+3. Verify the rules were applied:
+
+   ```bash
+   gsutil cors get gs://remix-studio-4bf8a.firebasestorage.app
+   ```
+
+   You should see the origins from `cors.json` listed.
+
+4. If you deploy to a domain not listed in `cors.json`, add it to the `origin`
+   array and re-run `gsutil cors set` before uploading from that domain.
+
+### Why CORS is required
+
+The app is hosted on `legend200711.github.io` (or your own domain), but the
+audio files are written to `remix-studio-4bf8a.firebasestorage.app`. Browsers
+reject cross-origin POST/PUT requests unless the target server explicitly
+allows the origin. Firebase Storage does not add CORS headers by default for
+non-Firebase-hosted domains.
+
+---
+
+## Step 1 — Deploy Firebase Security Rules
+
+```bash
+firebase deploy --only firestore:rules,firestore:indexes,storage
+```
+
+This deploys:
+- `firestore.rules` — Firestore access control (public read, owner write)
+- `firestore.indexes.json` — composite indexes for queries
+- `storage.rules` — Storage access control (public read, auth write)
 
 ---
 
@@ -100,8 +162,9 @@ The service worker (`sw.js`) is registered at `./sw.js` with scope `./`. This wo
 
 ## Checklist before going public
 
+- [ ] **Firebase Storage CORS configured** — `gsutil cors set cors.json gs://YOUR_BUCKET`
 - [ ] Firebase Authentication enabled with email/password and (optionally) Google
-- [ ] Cloudflare Pages domain added to Firebase authorized domains
+- [ ] Deployment domain added to Firebase authorized domains (Console → Auth → Settings → Authorized domains)
 - [ ] Firestore Security Rules deployed (`firebase deploy --only firestore:rules`)
 - [ ] Firestore indexes deployed (`firebase deploy --only firestore:indexes`)
 - [ ] Storage Security Rules deployed (`firebase deploy --only storage`)
@@ -109,9 +172,12 @@ The service worker (`sw.js`) is registered at `./sw.js` with scope `./`. This wo
 - [ ] No service-account keys committed to source control
 - [ ] Service worker cache version bumped after any asset changes (`sw.js` → `CACHE` constant)
 - [ ] PWA manifest `start_url` resolves correctly over HTTPS
-- [ ] Test: register, sign in, upload a track, sign out, sign in again from a second browser
+- [ ] Test: register, sign in, upload a track, verify upload progresses to 100%, play it back signed out
+- [ ] Test: sign in, "Join Free" is hidden, avatar menu is shown
+- [ ] Test: page refresh while signed in — "Join Free" never flashes
+- [ ] Test: sign out — "Join Free" reappears, avatar is hidden
 - [ ] Test: one user cannot delete another user's content
-- [ ] Test: direct navigation to `index.html` when unauthenticated redirects to `login.html`
+- [ ] Test: signed-out visitor can browse and play published tracks
 - [ ] Test: app installs correctly from HTTPS on mobile
 
 ---

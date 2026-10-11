@@ -46,6 +46,13 @@
 .sidebar-signin{margin-top:18px;padding:14px;background:var(--panel2);border-radius:12px;border:1px solid var(--line)}
 .sidebar-signin p{font-size:11px;color:var(--muted);margin:0;line-height:1.5}
 @media(max-width:760px){.guest-actions .btn-sm:first-child{display:none}.auth-gate-box{padding:28px 18px}}
+/* ── Auth loading state: hide nav until Firebase resolves auth ────────────── */
+/* body[data-auth-state="loading"] hides both guest and profile nav items   */
+/* so a signed-in user never sees a flash of "Join Free" on page load.      */
+body[data-auth-state="loading"] #guestActions,
+body[data-auth-state="loading"] #profileMenuWrap,
+body[data-auth-state="loading"] #sidebarSignin,
+body[data-auth-state="loading"] .sidebar-creator{visibility:hidden;pointer-events:none}
 
 /* ── Upload overlay (body-level, immune to #main re-renders) ─────────────── */
 .upload-overlay{position:fixed;inset:0;z-index:300;background:#000000dd;display:flex;align-items:center;justify-content:center;padding:20px}
