@@ -176,10 +176,16 @@ function showAuthGate(featureDescription) {
 }
 
 // ── Header: update for auth state ────────────────────────────────────────────
-function updateHeader(user) {
-  // Remove the loading state so the nav becomes visible.
-  // This runs once auth is resolved (signed in OR confirmed signed out).
-  document.body.removeAttribute("data-auth-state");
+function updateHeader(user, { authSettled = false } = {}) {
+  // Only remove the loading state when auth is fully settled — i.e., when we
+  // have either a confirmed signed-in user or have heard from watchAuthState
+  // (which fires after Firebase has fully resolved any locally-cached session).
+  // If we remove it prematurely on the first onAuthStateChanged(null) call,
+  // the "Join Free" buttons flash briefly even for signed-in users because
+  // the cached session has not been restored yet.
+  if (authSettled) {
+    document.body.removeAttribute("data-auth-state");
+  }
 
   const guestActions  = $("#guestActions");
   const profileWrap   = $("#profileMenuWrap");
@@ -337,10 +343,28 @@ function setPage(page){
   $$(".mobile-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   const views={home:homeView,music:musicView,videos:videosView,lyrics:lyricsView,collab:collabView,feed:feedView,messages:messagesView,notifications:notificationsView,upload:uploadView,profile:profileView};
 
-  // When navigating to the profile page, invalidate the cache so that the
-  // latest Firestore values are fetched. profileView() handles the async load
-  // by showing a brief "Loading…" state and re-rendering when data arrives.
-  if (page === "profile" && currentUser) profileCache = null;
+  // Do NOT null profileCache here. Nulling it on every profile navigation
+  // caused an infinite re-render loop: setPage("profile") → null cache →
+  // profileView() shows "Loading…" → loadProfileCache().then() calls
+  // setPage("profile") again → null again → infinite "Loading…".
+  // Instead, profileCache is invalidated only when the signed-in user changes
+  // (watchAuthState callback). When navigating to the profile page, we render
+  // immediately from the existing cache, then refresh from Firestore in the
+  // background and patch the displayed values in-place — no spinner, no re-render loop.
+  if (page === "profile" && currentUser && profileCache) {
+    loadProfileCache().then(() => {
+      // Update profile banner and form in-place so the user sees fresh values
+      // without a full re-render that would lose any edits in progress.
+      const bannerName = document.getElementById("profileBannerName");
+      const bannerBio  = document.getElementById("profileBannerBio");
+      const nameInput  = document.getElementById("profileNameInput");
+      const bioInput   = document.getElementById("profileBioInput");
+      if (bannerName && profileCache) bannerName.textContent = profileCache.displayName || "";
+      if (bannerBio  && profileCache) bannerBio.textContent  = profileCache.bio         || "";
+      if (nameInput  && profileCache) nameInput.value        = profileCache.displayName || "";
+      if (bioInput   && profileCache) bioInput.value         = profileCache.bio         || "";
+    });
+  }
 
   main.innerHTML=(views[page]||homeView)();
   bindForms();
@@ -860,8 +884,11 @@ async function init(){
     }
     currentUser = authResult.user;
 
-    // Update header — this clears the loading state and shows the correct nav
-    updateHeader(currentUser);
+    // Update header — do NOT clear loading state yet (authSettled=false).
+    // We'll clear it after watchAuthState confirms the real auth state.
+    // This prevents "Join Free" from briefly appearing for signed-in users
+    // while Firebase restores a locally-cached session.
+    updateHeader(currentUser, { authSettled: false });
     bindProfileMenu();
 
     if (currentUser) {
@@ -892,25 +919,32 @@ async function init(){
 
     // Watch for sign-in / sign-out events AFTER the initial render.
     // watchAuthState fires immediately (Firebase always fires onAuthStateChanged
-    // upon subscription), so we skip the initial fire if the user hasn't changed.
-    // This prevents an unwanted double setPage() call on every page load.
+    // upon subscription). We use this first fire to settle auth state and
+    // show/hide the correct nav — even if the user hasn't changed.
     let _authWatchInitialized = false;
     watchAuthState(user => {
       const newUser = user ?? null;
 
-      // Skip the immediate fire if auth state hasn't changed since boot
       if (!_authWatchInitialized) {
         _authWatchInitialized = true;
         const sameUser = (newUser?.uid ?? null) === (currentUser?.uid ?? null);
-        if (sameUser) return; // No change — initial fire, nothing to do
+        // Always call updateHeader with authSettled=true on the first watchAuthState
+        // fire so the loading state is removed and the correct nav is shown,
+        // regardless of whether the user changed.
+        if (sameUser) {
+          updateHeader(currentUser, { authSettled: true });
+          return;
+        }
       }
 
       const prevUid = currentUser?.uid ?? null;
       currentUser = newUser;
-      // Clear profileCache when the user changes (sign-in, sign-out, or
-      // account switch) so profileView() fetches fresh data for the new user.
+      // Clear profileCache when the signed-in user changes (different UID,
+      // sign-in, or sign-out) so profileView() fetches fresh data for the
+      // new user. Do NOT clear it on same-user refreshes — that caused the
+      // "Loading profile…" infinite spinner.
       profileCache = null;
-      updateHeader(currentUser);
+      updateHeader(currentUser, { authSettled: true });
 
       // Re-render current page to reflect auth change (sign-in or sign-out).
       // Do NOT navigate away if an upload overlay is active — the user should

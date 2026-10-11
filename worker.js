@@ -109,8 +109,11 @@ async function verifyFirebaseToken(idToken, projectId) {
   );
 
   // 5. Verify signature
+  // b64url() already decodes the base64url to raw bytes (as a Latin-1 string via atob).
+  // Do NOT call atob() again on the result — that would double-decode the signature bytes
+  // and produce garbage, causing crypto.subtle.verify to always return false.
   const signingInput = `${parts[0]}.${parts[1]}`;
-  const sigBytes     = Uint8Array.from(atob(b64url(parts[2])), c => c.charCodeAt(0));
+  const sigBytes     = Uint8Array.from(b64url(parts[2]), c => c.charCodeAt(0));
   const dataBytes    = new TextEncoder().encode(signingInput);
 
   const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, sigBytes, dataBytes);
