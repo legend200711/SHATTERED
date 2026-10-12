@@ -107,16 +107,46 @@ service cloud.firestore {
       allow delete: if isOwnerOf(resource);
     }
 
-    // ── Private messages (future feature) ────────────────────────────────
-    // Conversations: both participants must be members.
-    // Always requires authentication — private by design.
+    // ── Private messages ─────────────────────────────────────────────────
+    // Conversations: authenticated users may create a conversation that
+    // includes their own UID.  Only existing members may read or write.
     match /conversations/{conversationId} {
-      allow read, write: if isAuthed()
+      // Members can read their own conversation documents.
+      allow read: if isAuthed()
         && request.auth.uid in resource.data.memberUids;
 
+      // Allow creation: creator must include their own uid in memberUids.
+      allow create: if isAuthed()
+        && request.auth.uid in request.resource.data.memberUids
+        && request.resource.data.memberUids.size() >= 2
+        && request.resource.data.keys().hasAll(["memberUids", "createdAt", "updatedAt"]);
+
+      // Members can update conversation metadata (e.g. lastMessage, updatedAt).
+      allow update: if isAuthed()
+        && request.auth.uid in resource.data.memberUids
+        // memberUids list cannot be changed after creation
+        && request.resource.data.memberUids == resource.data.memberUids;
+
+      allow delete: if false;
+
       match /messages/{messageId} {
-        allow read, write: if isAuthed()
+        // Only conversation members can read messages.
+        allow read: if isAuthed()
           && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.memberUids;
+
+        // Any member can send a message; sender must stamp their own UID.
+        allow create: if isAuthed()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.memberUids
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.body.size() <= 5000;
+
+        // Members can edit/soft-delete messages (e.g. mark deleted:true, edit body).
+        allow update: if isAuthed()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.memberUids
+          // senderUid cannot be changed
+          && request.resource.data.senderUid == resource.data.senderUid;
+
+        allow delete: if false; // Use soft-delete (deleted:true) instead
       }
     }
 

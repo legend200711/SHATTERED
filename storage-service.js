@@ -238,6 +238,60 @@ export function uploadAudioFile(file, trackId, ownerUid, onProgress = () => {}) 
   };
 }
 
+/* ── Delete full track (R2 + Firestore) via Worker ──────────────────────── */
+/**
+ * Delete both the R2 audio file AND the Firestore track document in one call.
+ * The Worker enforces ownership server-side using the Firebase ID token.
+ * Returns { deleted: true } on full success, or { partial: true, ... } on
+ * partial success (one step failed). Throws on auth/permission errors.
+ */
+export async function deleteTrackFromWorker(trackId) {
+  const workerBase = workerConfig.workerBaseUrl;
+  if (!workerBase || workerBase.includes("YOUR_WORKER")) {
+    const err = new Error("Worker URL not configured. See SETUP.md.");
+    err.code = "worker-not-configured";
+    throw err;
+  }
+
+  const idToken = await getIdToken();
+
+  const resp = await fetch(`${workerBase}/api/track/${encodeURIComponent(trackId)}`, {
+    method:  "DELETE",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+
+  let body;
+  try {
+    body = await resp.json();
+  } catch (_) {
+    const err = new Error(`Server returned invalid JSON (HTTP ${resp.status})`);
+    err.status = resp.status;
+    throw err;
+  }
+
+  if (resp.status === 401 || resp.status === 403) {
+    const err = new Error(body.error || "Permission denied");
+    err.status = resp.status;
+    err.code   = resp.status === 403 ? "forbidden" : "unauthorized";
+    throw err;
+  }
+
+  if (resp.status === 404) {
+    const err = new Error(body.error || "Track not found");
+    err.status = 404;
+    err.code   = "not-found";
+    throw err;
+  }
+
+  if (resp.status === 200) return { deleted: true };
+
+  if (resp.status === 207) return { ...body, deleted: false, partial: true };
+
+  const err = new Error(body.error || `Delete failed (HTTP ${resp.status})`);
+  err.status = resp.status;
+  throw err;
+}
+
 /* ── Delete audio from R2 ────────────────────────────────────────────────── */
 export async function deleteAudioFile(storagePath) {
   if (!storagePath) return;

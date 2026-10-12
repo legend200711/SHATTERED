@@ -54,6 +54,13 @@ import {
   likePost,
   updateOwnProfile,
   getUserProfile,
+  subscribeConversations,
+  subscribeMessages,
+  createConversation,
+  sendMessage,
+  editMessage,
+  deleteMessage as deleteFirestoreMessage,
+  getUserByEmail,
 } from "./firestore-service.js";
 import {
   validateAudioFile,
@@ -70,6 +77,13 @@ const DB_NAME = "shattered-music-v1";
 let db, tracks=[], lyrics=[], collabs=[], posts=[], messages=[], notifications=[], currentTrackId=null, objectUrls=new Map(), toastTimer;
 let currentUser = null;   // Firebase Auth user, null for public visitors
 let firestoreUnsubscribes = [];
+// ── Messaging state ──────────────────────────────────────────────────────────
+let conversations = [];    // Firestore conversations the user belongs to
+let activeConvId  = null;  // conversation currently open in thread view
+let convMessages  = [];    // messages in activeConvId
+let convMsgTab    = "live";// "live" | "drafts"
+let convUnsub     = null;  // unsubscribe for conversations listener
+let msgUnsub      = null;  // unsubscribe for messages listener
 
 /**
  * profileCache — holds the latest saved profile values for the signed-in user.
@@ -204,6 +218,20 @@ function updateHeader(user, { authSettled = false } = {}) {
 
   // Show/hide CREATOR TOOLS section for signed-in users
   $$(".sidebar-creator").forEach(el => { el.hidden = !user; });
+
+  // Update mobile drawer auth sections
+  updateDrawerAuth(user);
+}
+
+function updateDrawerAuth(user) {
+  const creatorLabel = $("#drawerCreatorLabel");
+  const creatorItems = $("#drawerCreatorItems");
+  const signoutSec   = $("#drawerSignoutSection");
+  const guestSec     = $("#drawerGuestSection");
+  if (creatorLabel) creatorLabel.hidden = !user;
+  if (creatorItems) creatorItems.hidden = !user;
+  if (signoutSec)   signoutSec.hidden   = !user;
+  if (guestSec)     guestSec.hidden     = !!user;
 }
 
 function updateProfileMenu(user) {
@@ -246,6 +274,90 @@ function bindProfileMenu() {
   }
 }
 
+// ── Mobile drawer ─────────────────────────────────────────────────────────────
+function bindDrawer() {
+  const hamburger = $("#hamburgerBtn");
+  const drawer    = $("#mobileDrawer");
+  const backdrop  = $("#drawerBackdrop");
+  const closeBtn  = $("#drawerClose");
+  const drawerSignOut = $("#drawerSignOut");
+
+  if (!hamburger || !drawer) return;
+
+  function openDrawer() {
+    drawer.classList.add("open");
+    backdrop.classList.add("open");
+    drawer.removeAttribute("aria-hidden");
+    hamburger.setAttribute("aria-expanded", "true");
+    document.body.classList.add("drawer-open");
+    // Move focus to the close button for keyboard users
+    closeBtn?.focus();
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove("open");
+    backdrop.classList.remove("open");
+    drawer.setAttribute("aria-hidden", "true");
+    hamburger.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("drawer-open");
+    hamburger.focus();
+  }
+
+  hamburger.addEventListener("click", () => {
+    const isOpen = drawer.classList.contains("open");
+    if (isOpen) closeDrawer(); else openDrawer();
+  });
+
+  closeBtn?.addEventListener("click", closeDrawer);
+  backdrop.addEventListener("click", closeDrawer);
+
+  // Escape key closes drawer
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && drawer.classList.contains("open")) {
+      closeDrawer();
+    }
+  });
+
+  // Drawer navigation items: navigate and close
+  // stopPropagation so the global [data-page] delegation does not fire a second time.
+  drawer.addEventListener("click", e => {
+    const item = e.target.closest("[data-drawer-nav]");
+    if (item) {
+      const page = item.dataset.page;
+      if (page) {
+        e.stopPropagation();
+        closeDrawer();
+        setPage(page);
+      }
+    }
+  });
+
+  // Sign out button inside drawer
+  if (drawerSignOut) {
+    drawerSignOut.addEventListener("click", async () => {
+      closeDrawer();
+      toast("Signing out…");
+      await signOutUser();
+    });
+  }
+
+  // Trap focus inside drawer when open (Tab/Shift+Tab cycle within drawer)
+  drawer.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const focusable = [...drawer.querySelectorAll(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )].filter(el => !el.closest('[hidden]'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last  = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last)  { e.preventDefault(); first.focus(); }
+    }
+  });
+}
+
 // ── Rendering / state ────────────────────────────────────────────────────────
 async function refresh(){
   [messages, notifications] = await Promise.all(["messages","notifications"].map(all));
@@ -271,14 +383,13 @@ function trackCard(t,i=0) {
   return `<article class="track-card" id="track-card-${esc(t.id)}">${coverMarkup(t,i)}${ownerMenu}<h3 title="${esc(t.title)}">${esc(t.title)}</h3><p>${esc(t.artist)} · ${esc(t.genre||"Independent")}</p><div class="track-meta"><small>${esc(t.origin||"Creator upload")}</small><button class="play-btn" data-play="${esc(t.id)}" aria-label="Play ${esc(t.title)}">▶</button></div></article>`;
 }
 
-/* ── Delete-track confirmation dialog ───────────────────────────────────────── */
 function showDeleteTrackConfirm(track, onConfirm) {
   const existing = document.getElementById("deleteTrackModal");
   if (existing) existing.remove();
 
   const overlay = document.createElement("div");
   overlay.id = "deleteTrackModal";
-  overlay.className = "auth-gate-overlay"; // reuse the modal-overlay style
+  overlay.className = "auth-gate-overlay";
   overlay.innerHTML = `
     <div class="auth-gate-box delete-confirm-box" role="dialog" aria-modal="true" aria-labelledby="dtmTitle">
       <div class="auth-gate-icon" style="font-size:32px;margin-bottom:10px">🗑</div>
@@ -297,8 +408,7 @@ function showDeleteTrackConfirm(track, onConfirm) {
   document.body.appendChild(overlay);
 
   function close() { overlay.remove(); }
-
-  document.getElementById("dtmCancel").onclick  = close;
+  document.getElementById("dtmCancel").onclick = close;
   overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
   document.addEventListener("keydown", function esc2(e) {
     if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc2); }
@@ -309,20 +419,20 @@ function showDeleteTrackConfirm(track, onConfirm) {
     confirmBtn.disabled = true;
     confirmBtn.textContent = "Deleting…";
     const errEl = document.getElementById("dtmError");
-    errEl.style.display = "none";
     try {
       await onConfirm();
       close();
     } catch (err) {
+      const msg = err?.code === "worker-not-configured"
+        ? "Delete service not configured. Contact the site owner."
+        : err?.code === "forbidden" || err?.code === "unauthorized"
+        ? "Permission denied — make sure you are signed in as the owner."
+        : err?.message || "Delete failed. Try again.";
+      if (errEl) { errEl.textContent = msg; errEl.style.display = ""; }
       confirmBtn.disabled = false;
       confirmBtn.textContent = "Delete Song";
-      errEl.textContent = err.message || "Delete failed. Please try again.";
-      errEl.style.display = "block";
     }
   };
-
-  // Focus the cancel button for accessibility
-  document.getElementById("dtmCancel").focus();
 }
 
 function renderHome(){
@@ -408,6 +518,8 @@ function setPage(page){
   const main=$("#main");
   $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   $$(".mobile-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
+  // Update drawer active highlights
+  $$(".drawer-item[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   const views={home:homeView,music:musicView,videos:videosView,lyrics:lyricsView,collab:collabView,feed:feedView,messages:messagesView,notifications:notificationsView,upload:uploadView,profile:profileView};
 
   // Do NOT null profileCache here. Nulling it on every profile navigation
@@ -433,8 +545,24 @@ function setPage(page){
     });
   }
 
+  // When navigating away from messages, close any open conversation thread
+  if (page !== "messages" && activeConvId) {
+    closeConversation();
+  }
+
   main.innerHTML=(views[page]||homeView)();
   bindForms();
+  // If entering messages page, subscribe to live conversations
+  if (page === "messages" && currentUser && !convUnsub) {
+    subscribeUserConversations();
+  }
+  // Scroll messages thread to bottom when opening a thread
+  if (page === "messages" && activeConvId) {
+    requestAnimationFrame(() => {
+      const bubbleList = document.getElementById("msgBubbleList");
+      if (bubbleList) bubbleList.scrollTop = bubbleList.scrollHeight;
+    });
+  }
   main.focus({preventScroll:true});
   window.scrollTo({top:0,behavior:"smooth"});
   const dd = $("#profileDropdown");
@@ -544,7 +672,194 @@ function messagesView(){
       <a href="./login.html" class="btn primary">Sign in or create account</a>
     </div>`;
   }
-  return `<div class="eyebrow">DIRECT CONNECTIONS</div><h1 class="page-title">Messages</h1><p class="page-intro">A local message pad for drafts and notes. Real-time private messaging requires a deployed backend with Firestore conversation membership rules.</p><div class="panel"><h2>Local message pad</h2><div class="field"><label>Conversation label</label><input id="conversationLabel" placeholder="e.g. New collab idea"></div><div class="field" style="margin-top:12px"><label>Message draft</label><textarea id="messageBody" placeholder="Write a draft message…"></textarea></div><button class="btn primary" id="saveMessage" style="margin-top:12px">Save draft locally</button></div><div class="stack-list">${messages.length?messages.map(m=>`<article class="list-card"><div class="list-icon">✉</div><div><h3>${esc(m.label)}</h3><p>${esc(m.body)} · ${new Date(m.createdAt).toLocaleString()}</p></div><button class="text-link" data-delete-message="${esc(m.id)}">Delete</button></article>`).join(""):`<div class="empty-state">Your locally saved drafts will appear here.</div>`}</div>`;
+
+  // Active tab
+  const isLive = convMsgTab === "live";
+
+  // ── Thread view: a conversation is open ───────────────────────────────────
+  if (activeConvId) {
+    const conv    = conversations.find(c => c.id === activeConvId);
+    const convName = conv ? (conv.name || conv.memberUids.filter(u => u !== currentUser.uid).join(", ") || "Conversation") : "Conversation";
+    const bubbles = convMessages.map(m => {
+      if (m.deleted) {
+        return `<div class="msg-bubble ${m.senderUid === currentUser.uid ? "mine" : "theirs"}"><em style="color:var(--muted);font-size:12px">Message deleted</em></div>`;
+      }
+      const ts = m.createdAt?.seconds ? new Date(m.createdAt.seconds*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "";
+      const edited = m.editedAt ? " · edited" : "";
+      const canDelete = m.senderUid === currentUser.uid;
+      return `<div class="msg-bubble ${m.senderUid === currentUser.uid ? "mine" : "theirs"}">
+        <div>${esc(m.body)}</div>
+        <div class="msg-bubble-meta">
+          <span>${esc(m.senderName||"")}</span>
+          <span>${ts}${edited}</span>
+          ${canDelete ? `<button class="msg-bubble-delete" data-delete-msg="${esc(m.id)}" data-conv-id="${esc(activeConvId)}" title="Delete message">✕</button>` : ""}
+        </div>
+      </div>`;
+    }).join("") || `<div class="empty-state">No messages yet. Say hello!</div>`;
+
+    return `<div class="eyebrow">DIRECT CONNECTIONS</div><h1 class="page-title">Messages</h1>
+    <div class="msg-thread-header">
+      <button class="msg-thread-back" id="msgBackBtn">← Back</button>
+      <div class="conv-avatar">${esc(convName.slice(0,2).toUpperCase())}</div>
+      <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(convName)}</b>
+      <span class="msg-status-badge live">● LIVE</span>
+    </div>
+    <div class="msg-bubble-list" id="msgBubbleList">${bubbles}</div>
+    <div class="msg-input-row">
+      <textarea id="msgSendText" placeholder="Write a message…" rows="1" maxlength="5000"></textarea>
+      <button class="msg-send-btn" id="msgSendBtn" aria-label="Send message">↑</button>
+    </div>`;
+  }
+
+  // ── List view: show conversations ─────────────────────────────────────────
+  const tabBar = `<div class="msg-tabs" role="tablist">
+    <button class="msg-tab-btn ${isLive?"active":""}" role="tab" aria-selected="${isLive}" id="msgTabLive">✉ Messages</button>
+    <button class="msg-tab-btn ${!isLive?"active":""}" role="tab" aria-selected="${!isLive}" id="msgTabDrafts">✎ Local Drafts</button>
+  </div>`;
+
+  if (isLive) {
+    // ── Live messaging tab ──────────────────────────────────────────────────
+    const convList = conversations.length
+      ? conversations.map(c => {
+          const name = c.name || c.memberUids.filter(u => u !== currentUser.uid).join(", ") || "Conversation";
+          const preview = c.lastMessage || "No messages yet";
+          const ts = c.updatedAt?.seconds ? new Date(c.updatedAt.seconds*1000).toLocaleDateString() : "";
+          return `<button class="conv-item" data-open-conv="${esc(c.id)}">
+            <div class="conv-avatar">${esc(name.slice(0,2).toUpperCase())}</div>
+            <div class="conv-meta">
+              <div class="conv-name">${esc(name)}</div>
+              <div class="conv-preview">${esc(preview)}</div>
+            </div>
+            <div class="conv-time">${esc(ts)}</div>
+          </button>`;
+        }).join("")
+      : `<div class="empty-state"><b>No conversations yet.</b><br>Start a new conversation below.</div>`;
+
+    return `<div class="eyebrow">DIRECT CONNECTIONS</div><h1 class="page-title">Messages</h1>${tabBar}
+    <button class="new-conv-btn" id="newConvBtn">＋ New conversation</button>
+    <div id="newConvForm" hidden class="panel new-conv-form" style="margin-bottom:14px">
+      <h3 style="margin:0 0 10px">New conversation</h3>
+      <div class="field"><label for="newConvName">Conversation name (or describe who it's with)</label><input id="newConvName" maxlength="80" placeholder="e.g. Collab with DJ Atlas"></div>
+      <div class="field"><label for="newConvMemberEmail">Participant's email (must be a SHATTERED member)</label><input id="newConvMemberEmail" type="email" maxlength="200" placeholder="member@example.com"></div>
+      <div id="newConvError" style="color:#ff7070;font-size:12px;display:none"></div>
+      <div class="draft-edit-actions" style="margin-top:4px">
+        <button class="btn primary btn-sm" id="newConvSubmit">Start conversation</button>
+        <button class="btn outline btn-sm" id="newConvCancel">Cancel</button>
+      </div>
+    </div>
+    <div class="conv-list">${convList}</div>`;
+  } else {
+    // ── Local drafts tab ────────────────────────────────────────────────────
+    const draftList = messages.length
+      ? messages.map(m => `<article class="list-card">
+          <div class="list-icon">✎</div>
+          <div>
+            <h3>${esc(m.label)}</h3>
+            <p>${esc(m.body?.slice(0,100))}${m.body?.length>100?"…":""}</p>
+            <small style="color:var(--muted)">${new Date(m.createdAt).toLocaleString()}</small>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+            <button class="text-link" data-edit-draft="${esc(m.id)}" style="font-size:11px">Edit</button>
+            <button class="text-link" data-delete-message="${esc(m.id)}" style="font-size:11px;color:#ff7070">Delete</button>
+          </div>
+        </article>`).join("")
+      : `<div class="empty-state">Your local drafts will appear here.</div>`;
+
+    return `<div class="eyebrow">DIRECT CONNECTIONS</div><h1 class="page-title">Messages</h1>${tabBar}
+    <div class="drafts-notice">
+      <strong>LOCAL ONLY — NOT SENT</strong>
+      <p>These drafts are stored on this device only. They are not delivered to any other user and are not visible to anyone else. Use the Messages tab to send real private messages via your SHATTERED account.</p>
+    </div>
+    <div class="panel">
+      <h2>New draft</h2>
+      <div class="field"><label for="conversationLabel">Label</label><input id="conversationLabel" placeholder="e.g. New collab idea — for my own reference" maxlength="100"></div>
+      <div class="field" style="margin-top:12px"><label for="messageBody">Note / draft content</label><textarea id="messageBody" placeholder="Write a private note or draft message…" maxlength="5000"></textarea></div>
+      <button class="btn primary" id="saveMessage" style="margin-top:12px">Save draft locally</button>
+    </div>
+    <div class="stack-list">${draftList}</div>`;
+  }
+}
+
+/** Subscribe to Firestore conversations for the current user. Call when signing in. */
+function subscribeUserConversations() {
+  if (convUnsub) { convUnsub(); convUnsub = null; }
+  if (!currentUser) return;
+  convUnsub = subscribeConversations(currentUser.uid, convArr => {
+    conversations = convArr;
+    // Re-render only if messages page is active and not in thread view
+    const activePage = $$("[data-page].active")[0]?.dataset.page;
+    if (activePage === "messages" && !activeConvId) {
+      rerenderMessagesLive();
+    }
+  });
+}
+
+/** Re-render just the conversations list without losing scroll or thread state. */
+function rerenderMessagesLive() {
+  const convListEl = document.querySelector(".conv-list");
+  if (!convListEl) return;
+  if (!conversations.length) {
+    convListEl.innerHTML = `<div class="empty-state"><b>No conversations yet.</b><br>Start a new conversation below.</div>`;
+    return;
+  }
+  convListEl.innerHTML = conversations.map(c => {
+    const name = c.name || c.memberUids.filter(u => u !== currentUser.uid).join(", ") || "Conversation";
+    const preview = c.lastMessage || "No messages yet";
+    const ts = c.updatedAt?.seconds ? new Date(c.updatedAt.seconds*1000).toLocaleDateString() : "";
+    return `<button class="conv-item" data-open-conv="${esc(c.id)}">
+      <div class="conv-avatar">${esc(name.slice(0,2).toUpperCase())}</div>
+      <div class="conv-meta">
+        <div class="conv-name">${esc(name)}</div>
+        <div class="conv-preview">${esc(preview)}</div>
+      </div>
+      <div class="conv-time">${esc(ts)}</div>
+    </button>`;
+  }).join("");
+}
+
+/** Subscribe to messages in the active conversation thread. */
+function openConversation(convId) {
+  if (msgUnsub) { msgUnsub(); msgUnsub = null; }
+  activeConvId = convId;
+  convMessages = [];
+  msgUnsub = subscribeMessages(convId, msgs => {
+    convMessages = msgs;
+    // Re-render bubble list in-place if we're in thread view
+    const bubbleList = document.getElementById("msgBubbleList");
+    if (bubbleList) {
+      if (!msgs.length) {
+        bubbleList.innerHTML = `<div class="empty-state">No messages yet. Say hello!</div>`;
+        return;
+      }
+      bubbleList.innerHTML = msgs.map(m => {
+        if (m.deleted) {
+          return `<div class="msg-bubble ${m.senderUid === currentUser.uid ? "mine" : "theirs"}"><em style="color:var(--muted);font-size:12px">Message deleted</em></div>`;
+        }
+        const ts = m.createdAt?.seconds ? new Date(m.createdAt.seconds*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "";
+        const edited = m.editedAt ? " · edited" : "";
+        const canDelete = m.senderUid === currentUser.uid;
+        return `<div class="msg-bubble ${m.senderUid === currentUser.uid ? "mine" : "theirs"}">
+          <div>${esc(m.body)}</div>
+          <div class="msg-bubble-meta">
+            <span>${esc(m.senderName||"")}</span>
+            <span>${ts}${edited}</span>
+            ${canDelete ? `<button class="msg-bubble-delete" data-delete-msg="${esc(m.id)}" data-conv-id="${esc(activeConvId)}" title="Delete message">✕</button>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+      // Scroll to bottom on new messages
+      bubbleList.scrollTop = bubbleList.scrollHeight;
+    }
+  });
+  // Full re-render for thread view
+  setPage("messages");
+}
+
+/** Tear down conversation subscriptions when leaving messages or signing out. */
+function closeConversation() {
+  if (msgUnsub) { msgUnsub(); msgUnsub = null; }
+  activeConvId = null;
+  convMessages = [];
 }
 
 function notificationsView(){
@@ -565,11 +880,6 @@ function addNotice(title,body){return put("notifications",{id:uid(),title,body,c
 // ── Form bindings ────────────────────────────────────────────────────────────
 function bindForms(){
   const uf=$("#uploadForm");
-
-  // _retryFile holds the original File object so a retry after a transient
-  // network or server error re-uses the same file without re-reading the input.
-  let _retryFile = null;
-
   if(uf)uf.onsubmit=async e=>{
     e.preventDefault();
     if (!currentUser) { showAuthGate("Uploading music requires a SHATTERED account."); return; }
@@ -577,12 +887,8 @@ function bindForms(){
     // Prevent duplicate submissions while an upload is already running
     if (uploadState) { toast("An upload is already in progress."); return; }
 
-    const f = new FormData(uf);
-
-    // Use the preserved retry file if the input was cleared by a DOM re-render,
-    // otherwise read fresh from the form and save it for future retries.
-    const file = (f.get("audio")?.size > 0 ? f.get("audio") : null) || _retryFile;
-    if (file) _retryFile = file; // keep reference for retry
+    const f    = new FormData(uf);
+    const file = f.get("audio");
 
     // Client-side file validation
     const validationErr = validateAudioFile(file);
@@ -625,15 +931,13 @@ function bindForms(){
     };
     bindCancelBtn();
 
-    // ── 1. Upload audio file to R2 via Cloudflare Worker ─────────────────
+    // ── 1. Upload audio to Firebase Storage ──────────────────────────────
     const { promise: storagePromise, cancel: cancelStorage } = uploadAudioFile(
       file, trackId, currentUser.uid,
       pct => {
         setUploadProgress(pct);
         if (pct < 100) {
-          setUploadStatus(`Uploading audio… ${pct}%`);
-        } else {
-          setUploadStatus("Audio received — saving track details…");
+          setUploadStatus(`Uploading… ${pct}%`);
         }
       }
     );
@@ -651,19 +955,17 @@ function bindForms(){
       setUploadProgress(100);
       setUploadStatus("Saving track details…");
     } catch (storageErr) {
-      console.error("R2 upload error:", storageErr);
+      console.error("Storage upload error:", storageErr);
       uploadState = null;
-      const userMsg = "Upload failed — " + translateStorageError(storageErr);
-      // Auth and token-refresh errors require the user to sign out and back in.
-      // Retrying immediately will fail again for those cases.
-      const isAuthError = storageErr.code === "unauthorized"
-                       || storageErr.code === "not-signed-in"
-                       || storageErr.code === "token-refresh-failed"
-                       || storageErr.status === 401;
-      showUploadError(userMsg, isAuthError ? null : () => {
-        // Re-dispatch with the preserved file reference
+      const userMsg = translateStorageError(storageErr);
+      // Offer retry only for non-permission errors (permission errors need
+      // the user to fix their account first)
+      const canRetry = storageErr.code !== "storage/unauthorized"
+                    && storageErr.code !== "storage/unauthenticated";
+      showUploadError(userMsg, canRetry ? () => {
+        // Re-submit the form programmatically with the same file
         uf.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      });
+      } : null);
       return;
     }
 
@@ -675,7 +977,6 @@ function bindForms(){
     }
 
     // ── 3. Save metadata to Firestore ─────────────────────────────────────
-    setUploadStatus("Publishing track…");
     const firestoreMeta = {
       ...meta,
       storagePath:       storageResult.storagePath,
@@ -687,52 +988,21 @@ function bindForms(){
       await saveTrackMeta(firestoreMeta, currentUser.uid);
     } catch (firestoreErr) {
       console.error("Firestore write error:", firestoreErr);
+      // Firestore write failed AFTER the audio was stored.
+      // Attempt to delete the orphan Storage file to keep things consistent.
+      try { await deleteAudioFile(storageResult.storagePath); } catch (_) {}
       uploadState = null;
-      // The audio file is already stored in R2. Do NOT delete it on a Firestore
-      // error — the user can retry and we will overwrite the same document with
-      // setDoc (idempotent). Deleting the audio then retrying would cause an
-      // unnecessary re-upload.
-      //
-      // Surface the actual Firestore error message so the user and developer
-      // can understand what went wrong (e.g. rules denial vs network failure).
-      const fsMsg = firestoreErr?.message || "unknown error";
       showUploadError(
-        `Track details could not be saved: ${fsMsg}. ` +
-        "Your audio file is safe — tap Retry to publish it.",
+        "Track details could not be saved (Firestore error). " +
+        "The audio file has been removed to avoid duplicates. Please try again.",
         () => {
-          // On retry we must re-use the same trackId so that if R2 already has
-          // the file, the Worker will accept the upload (R2 put is idempotent).
-          // However the form submit regenerates trackId via uid(). To avoid
-          // a duplicate R2 object we skip re-uploading: attempt the Firestore
-          // write directly with the already-known storageResult.
-          (async () => {
-            showUploadOverlay({ title: meta.title, artist: meta.artist });
-            setUploadProgress(100);
-            setUploadStatus("Retrying publication…");
-            try {
-              await saveTrackMeta(firestoreMeta, currentUser.uid);
-              _retryFile = null;
-              await addNotice("Track uploaded", `${meta.title} was shared with the community.`);
-              setUploadStatus("Upload complete!");
-              setTimeout(() => {
-                removeUploadOverlay();
-                toast(`"${meta.title}" is now live in the music library.`);
-                setPage("music");
-              }, 1200);
-            } catch (retryErr) {
-              showUploadError(
-                `Could not publish track: ${retryErr?.message || "unknown error"}. Please try again.`,
-                null
-              );
-            }
-          })();
+          uf.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         }
       );
       return;
     }
 
     // ── 4. Success ────────────────────────────────────────────────────────
-    _retryFile = null; // clear preserved file on success
     uploadState = null;
     await addNotice("Track uploaded", `${meta.title} was shared with the community.`);
     setUploadStatus("Upload complete!");
@@ -916,72 +1186,42 @@ document.addEventListener("click",async e=>{
     const dropdown = document.getElementById("tmd-" + tid);
     if (!dropdown) return;
     const isOpen = !dropdown.hidden;
-    // Close all open track menus first
     document.querySelectorAll(".track-menu-dropdown").forEach(d => { d.hidden = true; });
     document.querySelectorAll("[data-track-menu]").forEach(b => b.setAttribute("aria-expanded","false"));
-    if (!isOpen) {
-      dropdown.hidden = false;
-      menuBtn.setAttribute("aria-expanded","true");
-    }
+    if (!isOpen) { dropdown.hidden = false; menuBtn.setAttribute("aria-expanded","true"); }
     return;
   }
 
-  // ── Delete track ───────────────────────────────────────────────────────────
+  // ── Delete track (R2 + Firestore via Worker) ──────────────────────────────
   const dt = e.target.closest("[data-delete-track]");
   if (dt) {
-    // Close the dropdown first
     document.querySelectorAll(".track-menu-dropdown").forEach(d => { d.hidden = true; });
     document.querySelectorAll("[data-track-menu]").forEach(b => b.setAttribute("aria-expanded","false"));
-
     if (!currentUser) { showAuthGate("Deleting songs requires a SHATTERED account."); return; }
-
     const trackId = dt.dataset.deleteTrack;
     const track   = tracks.find(x => x.id === trackId);
     if (!track) { toast("Track not found."); return; }
-
-    // Client-side ownership pre-check (server enforces the real check)
-    if (track.ownerUid !== currentUser.uid) {
-      toast("You can only delete your own songs.");
-      return;
-    }
-
+    if (track.ownerUid !== currentUser.uid) { toast("You can only delete your own songs."); return; }
     showDeleteTrackConfirm(track, async () => {
       const result = await deleteTrackFromWorker(trackId);
-
-      // Whether fully or partially successful, remove from local stores
       tracks = tracks.filter(x => x.id !== trackId);
       try { await remove("tracks", trackId); } catch (_) {}
-
-      // Stop player if this track is currently playing
       if (currentTrackId === trackId) {
-        const audio = $("#audio");
-        if (audio) { audio.pause(); audio.src = ""; }
-        const player = $("#player");
-        if (player) player.hidden = true;
+        const audio = $("#audio"); if (audio) { audio.pause(); audio.src = ""; }
+        const player = $("#player"); if (player) player.hidden = true;
         currentTrackId = null;
       }
-
-      // Remove the card from the DOM immediately (no full re-render needed)
       const card = document.getElementById("track-card-" + trackId);
       if (card) card.remove();
-
-      // Update counts in-place
       updateCounts();
-
-      // Update the track-count heading if visible (music view)
       const heading = document.querySelector("#main .section-head h2");
-      if (heading && heading.textContent.startsWith("All tracks")) {
-        heading.textContent = `All tracks (${tracks.length})`;
-      }
-
+      if (heading && heading.textContent.startsWith("All tracks")) heading.textContent = `All tracks (${tracks.length})`;
       if (result.partial) {
-        const details = [];
-        if (!result.r2Deleted) details.push("audio file may remain in storage");
-        if (!result.fsDeleted) details.push("metadata may remain in database");
-        toast(`Song deleted (partial: ${details.join("; ")}). Check again shortly.`);
-      } else {
-        toast("Song deleted successfully.");
-      }
+        const parts = [];
+        if (!result.r2Deleted) parts.push("audio file may remain in storage");
+        if (!result.fsDeleted) parts.push("metadata may remain in database");
+        toast(`Song deleted (partial: ${parts.join("; ")}). Check again shortly.`);
+      } else { toast("Song deleted successfully."); }
     });
     return;
   }
@@ -1031,12 +1271,139 @@ document.addEventListener("click",async e=>{
     return;
   }
   const dm=e.target.closest("[data-delete-message]");
-  if(dm){await remove("messages",dm.dataset.deleteMessage);await refresh();setPage("messages");return;}
+  if(dm){await remove("messages",dm.dataset.deleteMessage);await refresh();convMsgTab="drafts";setPage("messages");return;}
   const rd=e.target.closest("[data-read]");
   if(rd){const n=notifications.find(x=>x.id===rd.dataset.read);if(n){n.read=true;await put("notifications",n);await refresh();setPage("notifications");}return;}
+
+  // ── Messaging: open a Firestore conversation thread ──────────────────────
+  const oc=e.target.closest("[data-open-conv]");
+  if(oc){openConversation(oc.dataset.openConv);return;}
+
+  // ── Messaging: delete a Firestore message (soft-delete) ──────────────────
+  const dmsg=e.target.closest("[data-delete-msg]");
+  if(dmsg){
+    if(!currentUser){return;}
+    try{await deleteFirestoreMessage(dmsg.dataset.convId,dmsg.dataset.deleteMsg);toast("Message deleted.");}
+    catch(err){toast("Could not delete message.");}
+    return;
+  }
 });
 
 document.addEventListener("click",async e=>{
+  // ── Messages: tab switching ───────────────────────────────────────────────
+  if(e.target.id==="msgTabLive"){convMsgTab="live";closeConversation();setPage("messages");return;}
+  if(e.target.id==="msgTabDrafts"){convMsgTab="drafts";closeConversation();setPage("messages");return;}
+
+  // ── Messages: back button from thread view ───────────────────────────────
+  if(e.target.id==="msgBackBtn"){closeConversation();setPage("messages");return;}
+
+  // ── Messages: send a real Firestore message ───────────────────────────────
+  if(e.target.id==="msgSendBtn"){
+    if(!currentUser||!activeConvId){return;}
+    const ta=$("#msgSendText");
+    const body=ta?.value.trim();
+    if(!body){return;}
+    const name=currentUser.displayName||currentUser.email?.split("@")[0]||"Creator";
+    try{
+      ta.value="";
+      ta.disabled=true;
+      e.target.disabled=true;
+      await sendMessage(activeConvId,currentUser.uid,name,body);
+    }catch(err){
+      toast("Could not send — check connection and try again.");
+      ta.value=body; // restore text
+    }finally{
+      ta.disabled=false;
+      e.target.disabled=false;
+      ta.focus();
+    }
+    return;
+  }
+
+  // ── Messages: show / hide new conversation form ───────────────────────────
+  if(e.target.id==="newConvBtn"){
+    const f=$("#newConvForm");if(f){f.hidden=!f.hidden;}return;
+  }
+  if(e.target.id==="newConvCancel"){
+    const f=$("#newConvForm");if(f){f.hidden=true;}return;
+  }
+
+  // ── Messages: create new conversation ────────────────────────────────────
+  if(e.target.id==="newConvSubmit"){
+    if(!currentUser){showAuthGate("Messaging requires a SHATTERED account.");return;}
+    const nameVal=($("#newConvName")?.value||"").trim();
+    const emailVal=($("#newConvMemberEmail")?.value||"").trim();
+    const errEl=$("#newConvError");
+    if(!nameVal){if(errEl){errEl.textContent="Enter a conversation name.";errEl.style.display="";}return;}
+    if(!emailVal){if(errEl){errEl.textContent="Enter the participant's email address.";errEl.style.display="";}return;}
+    if(errEl){errEl.style.display="none";}
+    e.target.disabled=true;e.target.textContent="Starting…";
+    try{
+      // Look up the other user's UID by email from Firestore users collection
+      const otherUser=await getUserByEmail(emailVal);
+      if(!otherUser){
+        if(errEl){errEl.textContent=`No SHATTERED account found for ${emailVal}.`;errEl.style.display="";}
+        e.target.disabled=false;e.target.textContent="Start conversation";
+        return;
+      }
+      const otherUid=otherUser.id;
+      if(otherUid===currentUser.uid){
+        if(errEl){errEl.textContent="You cannot start a conversation with yourself.";errEl.style.display="";}
+        e.target.disabled=false;e.target.textContent="Start conversation";
+        return;
+      }
+      const newId=await createConversation([currentUser.uid,otherUid],nameVal);
+      openConversation(newId);
+      toast("Conversation started!");
+    }catch(err){
+      if(errEl){errEl.textContent=`Could not start conversation: ${err?.message||"unknown error"}`;errEl.style.display="";}
+      e.target.disabled=false;e.target.textContent="Start conversation";
+    }
+    return;
+  }
+
+  // ── Messages: edit a local draft ─────────────────────────────────────────
+  const editDraft=e.target.closest("[data-edit-draft]");
+  if(editDraft){
+    const mid=editDraft.dataset.editDraft;
+    const m=messages.find(x=>x.id===mid);
+    if(!m)return;
+    // Replace the list-card with an inline edit form
+    const card=editDraft.closest(".list-card");
+    if(!card)return;
+    card.innerHTML=`<div style="flex:1;min-width:0">
+      <div class="draft-edit-form">
+        <input id="editDraftLabel" value="${esc(m.label)}" maxlength="100" placeholder="Label">
+        <textarea id="editDraftBody" maxlength="5000" rows="3">${esc(m.body)}</textarea>
+        <div class="draft-edit-actions">
+          <button class="btn primary btn-sm" data-save-draft="${esc(mid)}">Save</button>
+          <button class="btn outline btn-sm" data-cancel-draft="${esc(mid)}">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+    card.querySelector("#editDraftLabel")?.focus();
+    return;
+  }
+  const saveDraft=e.target.closest("[data-save-draft]");
+  if(saveDraft){
+    const mid=saveDraft.dataset.saveDraft;
+    const m=messages.find(x=>x.id===mid);
+    if(!m)return;
+    const newLabel=(document.getElementById("editDraftLabel")?.value||"").trim();
+    const newBody=(document.getElementById("editDraftBody")?.value||"").trim();
+    if(!newLabel||!newBody){toast("Label and content cannot be empty.");return;}
+    await put("messages",{...m,label:newLabel,body:newBody});
+    await refresh();
+    convMsgTab="drafts";
+    setPage("messages");
+    toast("Draft updated.");
+    return;
+  }
+  const cancelDraft=e.target.closest("[data-cancel-draft]");
+  if(cancelDraft){
+    convMsgTab="drafts";setPage("messages");return;
+  }
+
   if(e.target.id==="saveMessage"){
     if (!currentUser) { showAuthGate("Saving messages requires a SHATTERED account."); return; }
     const label=$("#conversationLabel")?.value.trim();
@@ -1044,7 +1411,8 @@ document.addEventListener("click",async e=>{
     if(!label||!body)return toast("Enter a label and message.");
     await put("messages",{id:uid(),label,body,createdAt:Date.now()});
     await addNotice("Draft saved",`Message draft for "${label}" saved locally.`);
-    await refresh();setPage("messages");toast("Draft saved locally.");
+    await refresh();convMsgTab="drafts";setPage("messages");toast("Draft saved locally.");
+    return;
   }
   if(e.target.id==="markAllRead"){for(const n of notifications){n.read=true;await put("notifications",n);}await refresh();setPage("notifications");toast("Notifications marked as read.");}
   if(e.target.id==="exportData")downloadData();
@@ -1053,6 +1421,16 @@ document.addEventListener("click",async e=>{
       for(const name of ["tracks","messages","notifications"]){const tx=db.transaction(name,"readwrite");tx.objectStore(name).clear();}
       setTimeout(async()=>{await refresh();setPage("home");toast("Local data cleared.");},100);
     }
+  }
+
+  // ── Messages: send on Enter (not Shift+Enter) ─────────────────────────────
+});
+
+// ── Send message on Enter key ─────────────────────────────────────────────────
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && document.activeElement?.id === "msgSendText") {
+    e.preventDefault();
+    document.getElementById("msgSendBtn")?.click();
   }
 });
 
@@ -1116,12 +1494,15 @@ async function init(){
     // while Firebase restores a locally-cached session.
     updateHeader(currentUser, { authSettled: false });
     bindProfileMenu();
+    bindDrawer();
 
     if (currentUser) {
       // Signed-in: upsert Firestore profile (creates if new, updates timestamps)
       await upsertUserProfile(currentUser);
       // Pre-load the profile cache so the profile page renders instantly
       await loadProfileCache();
+      // Subscribe to user's conversations for real-time messaging
+      subscribeUserConversations();
     }
 
     // ── Subscribe to published Firestore collections (public read) ─────────
@@ -1171,6 +1552,9 @@ async function init(){
       // "Loading profile…" infinite spinner.
       profileCache = null;
       updateHeader(currentUser, { authSettled: true });
+      // Subscribe/unsubscribe to Firestore conversations based on auth
+      closeConversation();
+      subscribeUserConversations();
 
       // Re-render current page to reflect auth change (sign-in or sign-out).
       // Do NOT navigate away if an upload overlay is active — the user should

@@ -25,6 +25,7 @@ import {
   serverTimestamp,
   where,
   increment,
+  arrayUnion,
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 import { getApps, initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
 import { firebaseConfig }         from "./firebase-config.js";
@@ -187,4 +188,132 @@ export async function updateOwnProfile(uid, { displayName, bio, photoURL }) {
   if (bio         !== undefined) data.bio         = bio;
   if (photoURL    !== undefined) data.photoURL    = photoURL;
   await setDoc(doc(db, "users", uid), data, { merge: true });
+}
+
+/* ── Private messaging ───────────────────────────────────────────────────── */
+
+/**
+ * Subscribe to all conversations the given user is a member of.
+ * Returns an unsubscribe function.
+ */
+export function subscribeConversations(uid, callback) {
+  try {
+    const db = getDB();
+    const q = query(
+      collection(db, "conversations"),
+      where("memberUids", "array-contains", uid),
+      orderBy("updatedAt", "desc")
+    );
+    return onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      callback(docs);
+    }, err => {
+      console.warn("Firestore conversations listener error:", err);
+      callback([]);
+    });
+  } catch (err) {
+    console.warn("Could not subscribe to conversations:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Subscribe to messages within a specific conversation.
+ * Returns an unsubscribe function.
+ */
+export function subscribeMessages(conversationId, callback) {
+  try {
+    const db = getDB();
+    const q = query(
+      collection(db, "conversations", conversationId, "messages"),
+      orderBy("createdAt", "asc")
+    );
+    return onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      callback(docs);
+    }, err => {
+      console.warn("Firestore messages listener error:", err);
+      callback([]);
+    });
+  } catch (err) {
+    console.warn("Could not subscribe to messages:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Create a new one-to-one or group conversation.
+ * memberUids must include the current user's uid.
+ * Returns the new conversation document id.
+ */
+export async function createConversation(memberUids, name = "") {
+  const db = getDB();
+  const ref = doc(collection(db, "conversations"));
+  await setDoc(ref, {
+    memberUids,
+    name: name || "",
+    createdAt:  serverTimestamp(),
+    updatedAt:  serverTimestamp(),
+    lastMessage: "",
+  });
+  return ref.id;
+}
+
+/**
+ * Send a message in a conversation.
+ * Caller must be a member — enforced by Firestore rules.
+ */
+export async function sendMessage(conversationId, senderUid, senderName, body) {
+  const db  = getDB();
+  const msgRef = doc(collection(db, "conversations", conversationId, "messages"));
+  await setDoc(msgRef, {
+    senderUid,
+    senderName,
+    body,
+    createdAt: serverTimestamp(),
+    editedAt:  null,
+    deleted:   false,
+  });
+  // Update parent conversation's updatedAt and lastMessage preview
+  await updateDoc(doc(db, "conversations", conversationId), {
+    updatedAt:   serverTimestamp(),
+    lastMessage: body.slice(0, 80),
+  });
+  return msgRef.id;
+}
+
+/**
+ * Edit the body of a message the caller sent.
+ * Firestore rules require the caller be a conversation member.
+ */
+export async function editMessage(conversationId, messageId, newBody) {
+  const db = getDB();
+  await updateDoc(
+    doc(db, "conversations", conversationId, "messages", messageId),
+    { body: newBody, editedAt: serverTimestamp() }
+  );
+}
+
+/**
+ * Soft-delete a message (marks deleted:true, clears body).
+ */
+export async function deleteMessage(conversationId, messageId) {
+  const db = getDB();
+  await updateDoc(
+    doc(db, "conversations", conversationId, "messages", messageId),
+    { deleted: true, body: "", editedAt: serverTimestamp() }
+  );
+}
+
+/**
+ * Look up a user document by email address.
+ * Returns the user object ({ id, ...data }) or null if not found.
+ */
+export async function getUserByEmail(email) {
+  const db  = getDB();
+  const q   = query(collection(db, "users"), where("email", "==", email));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() };
 }

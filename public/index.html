@@ -10,6 +10,12 @@
 <body data-auth-state="loading">
 <div class="app-shell">
 <header class="topbar">
+  <!-- Hamburger — visible only on mobile -->
+  <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open navigation menu" aria-controls="mobileDrawer" aria-expanded="false">
+    <span class="hamburger-line"></span>
+    <span class="hamburger-line"></span>
+    <span class="hamburger-line"></span>
+  </button>
   <button class="brand" data-page="home" aria-label="SHATTERED home"><span class="brand-mark">S<span>/</span></span><span>SHATTERED<small>MUSIC WITHOUT LIMITS</small></span></button>
   <label class="search"><span>⌕</span><input id="globalSearch" placeholder="Search tracks, creators, lyrics…" autocomplete="off"></label>
   <div class="top-actions">
@@ -36,6 +42,38 @@
     </div>
   </div>
 </header>
+<!-- Mobile navigation drawer -->
+<div class="mobile-drawer-backdrop" id="drawerBackdrop" aria-hidden="true"></div>
+<nav class="mobile-drawer" id="mobileDrawer" aria-label="Main navigation" aria-hidden="true">
+  <div class="drawer-header">
+    <div class="drawer-brand"><span class="brand-mark">S<span>/</span></span> SHATTERED</div>
+    <button class="drawer-close" id="drawerClose" aria-label="Close navigation">×</button>
+  </div>
+  <div class="drawer-section-label">EXPLORE</div>
+  <button class="drawer-item" data-drawer-nav data-page="home">⌂ Discover</button>
+  <button class="drawer-item" data-drawer-nav data-page="music">♫ Music Library</button>
+  <button class="drawer-item" data-drawer-nav data-page="lyrics">≋ Lyrics</button>
+  <button class="drawer-item" data-drawer-nav data-page="collab">✳ Collaborations</button>
+  <button class="drawer-item" data-drawer-nav data-page="feed">◉ Community Feed</button>
+  <button class="drawer-item" data-drawer-nav data-page="messages">✉ Messages</button>
+  <button class="drawer-item" data-drawer-nav data-page="notifications">♧ Notifications</button>
+  <div class="drawer-section-label drawer-creator-section" id="drawerCreatorLabel">CREATOR TOOLS</div>
+  <div class="drawer-creator-section" id="drawerCreatorItems">
+    <button class="drawer-item" data-drawer-nav data-page="upload">＋ Upload Music</button>
+    <button class="drawer-item" data-drawer-nav data-page="profile">◌ My Profile</button>
+    <button class="drawer-item" data-drawer-nav data-page="profile">⚙ Account Settings</button>
+  </div>
+  <div class="drawer-auth-section">
+    <div class="drawer-signout-section" id="drawerSignoutSection" hidden>
+      <hr class="profile-dropdown-line" style="margin:12px 0">
+      <button class="drawer-item drawer-signout" id="drawerSignOut">⎋ Sign Out</button>
+    </div>
+    <div class="drawer-guest-section" id="drawerGuestSection" hidden>
+      <hr class="profile-dropdown-line" style="margin:12px 0">
+      <a href="./login.html" class="btn primary drawer-auth-btn">Sign In or Join Free</a>
+    </div>
+  </div>
+</nav>
 <div class="layout">
 <aside class="sidebar">
   <div class="side-label">EXPLORE</div>

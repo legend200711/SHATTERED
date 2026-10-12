@@ -383,6 +383,11 @@ async function handleDelete(request, env, origin, key) {
  * the Worker serves them without auth, matching the "public listening"
  * requirement. Unpublished tracks should not have their key advertised in
  * the frontend at all (Firestore only returns published track URLs).
+ *
+ * R2's env.BUCKET.get(key, { range }) requires either an R2Range object
+ * { offset, length } or a Headers object. Passing the raw "Range: bytes=…"
+ * string throws internally and produces a 502. We pass request.headers
+ * directly so the R2 runtime parses the Range header itself.
  */
 async function handleMedia(request, env, origin, key) {
   const rangeHeader = request.headers.get("Range");
@@ -390,19 +395,29 @@ async function handleMedia(request, env, origin, key) {
   let object;
   try {
     if (rangeHeader) {
-      object = await env.BUCKET.get(key, { range: rangeHeader });
+      // Pass the full Headers object — R2 parses the Range header itself.
+      // Do NOT pass the raw string; that throws an internal R2 error.
+      object = await env.BUCKET.get(key, { range: request.headers });
     } else {
       object = await env.BUCKET.get(key);
     }
   } catch (err) {
-    return json({ error: "Storage error" }, 502, origin);
+    console.error("R2 get error for key", key, err);
+    return json({ error: "Storage error: " + err.message }, 502, origin);
   }
 
   if (!object) {
     return json({ error: "Not found" }, 404, origin);
   }
 
-  const status = rangeHeader ? 206 : 200;
+  // Determine status and Content-Range.
+  // When we pass request.headers to R2 and no Range header was present,
+  // R2 may still populate object.range with the full range. We only
+  // send 206 + Content-Range when the client actually sent a Range header.
+  const clientWantsRange = !!rangeHeader;
+  const responded206 = clientWantsRange && !!object.range;
+  const status = responded206 ? 206 : 200;
+
   const headers = new Headers({
     "Content-Type":  object.httpMetadata?.contentType || "audio/mpeg",
     "Accept-Ranges": "bytes",
@@ -410,7 +425,7 @@ async function handleMedia(request, env, origin, key) {
     ...corsHeaders(origin),
   });
 
-  if (object.range) {
+  if (responded206) {
     const { offset, length } = object.range;
     const total = object.size;
     headers.set("Content-Range", `bytes ${offset}-${offset + length - 1}/${total}`);

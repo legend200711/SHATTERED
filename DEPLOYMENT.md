@@ -57,16 +57,18 @@ Firebase Storage is **not** used for audio.
 
 ---
 
-## Step 1 — Deploy Firebase Security Rules
+## Step 1 — Deploy Firebase Security Rules and Indexes
 
 ```bash
 firebase deploy --only firestore:rules,firestore:indexes,storage
 ```
 
 This deploys:
-- `firestore.rules` — Firestore access control (public read, owner write)
-- `firestore.indexes.json` — composite indexes for queries
+- `firestore.rules` — Firestore access control (public read, owner write, conversation membership)
+- `firestore.indexes.json` — composite indexes for queries (including messaging)
 - `storage.rules` — Storage access control (public read, auth write)
+
+**Important:** The messaging feature requires the composite index on `conversations` (memberUids / updatedAt). Deploy indexes before using messaging or Firestore will return an error.
 
 ---
 
@@ -179,6 +181,12 @@ The service worker (`sw.js`) is registered at `./sw.js` with scope `./`. This wo
 - [ ] Test: one user cannot delete another user's content
 - [ ] Test: signed-out visitor can browse and play published tracks
 - [ ] Test: app installs correctly from HTTPS on mobile
+- [ ] Test: hamburger button appears on mobile, drawer opens/closes, all nav links work
+- [ ] Test: drawer highlights the current section
+- [ ] Test: messages page shows Messages tab (Firestore) and Local Drafts tab separately
+- [ ] Test: two signed-in users can exchange real-time messages via the Messages tab
+- [ ] Test: local drafts are labeled "LOCAL ONLY — NOT SENT" and are editable/deletable
+- [ ] Test: users can only read and write their own conversations (test Firestore rules)
 
 ---
 
