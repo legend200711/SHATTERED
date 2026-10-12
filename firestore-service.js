@@ -308,6 +308,8 @@ export async function deleteMessage(conversationId, messageId) {
 /**
  * Look up a user document by email address.
  * Returns the user object ({ id, ...data }) or null if not found.
+ * Only the document ID (the Firebase Auth UID) is used as identity —
+ * email is used solely for lookup, never as proof of identity.
  */
 export async function getUserByEmail(email) {
   const db  = getDB();
@@ -316,4 +318,32 @@ export async function getUserByEmail(email) {
   if (snap.empty) return null;
   const d = snap.docs[0];
   return { id: d.id, ...d.data() };
+}
+
+/**
+ * Look up a user document by displayName (username).
+ * Case-sensitive. Returns first match or null.
+ * Only the document ID (the Firebase Auth UID) is used as identity.
+ */
+export async function getUserByUsername(username) {
+  const db  = getDB();
+  const q   = query(collection(db, "users"), where("displayName", "==", username));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() };
+}
+
+/**
+ * Resolve a recipient by email address or username.
+ * Tries email first, then username. Returns the user object or null.
+ */
+export async function resolveRecipient(emailOrUsername) {
+  const trimmed = emailOrUsername.trim();
+  // If it looks like an email, query by email only
+  if (trimmed.includes("@")) {
+    return getUserByEmail(trimmed);
+  }
+  // Otherwise query by displayName
+  return getUserByUsername(trimmed);
 }

@@ -60,7 +60,7 @@ import {
   sendMessage,
   editMessage,
   deleteMessage as deleteFirestoreMessage,
-  getUserByEmail,
+  resolveRecipient,
 } from "./firestore-service.js";
 import {
   validateAudioFile,
@@ -752,8 +752,8 @@ function messagesView(){
     <button class="new-conv-btn" id="newConvBtn">＋ New conversation</button>
     <div id="newConvForm" hidden class="panel new-conv-form" style="margin-bottom:14px">
       <h3 style="margin:0 0 10px">New conversation</h3>
-      <div class="field"><label for="newConvName">Conversation name (or describe who it's with)</label><input id="newConvName" maxlength="80" placeholder="e.g. Collab with DJ Atlas"></div>
-      <div class="field"><label for="newConvMemberEmail">Participant's email (must be a SHATTERED member)</label><input id="newConvMemberEmail" type="email" maxlength="200" placeholder="member@example.com"></div>
+      <div class="field"><label for="newConvName">Conversation name</label><input id="newConvName" maxlength="80" placeholder="e.g. Collab with DJ Atlas"></div>
+      <div class="field"><label for="newConvRecipient">Recipient username or email (must be a SHATTERED member)</label><input id="newConvRecipient" type="text" maxlength="200" placeholder="username or member@example.com" autocomplete="off" autocapitalize="none"></div>
       <div id="newConvError" style="color:#ff7070;font-size:12px;display:none"></div>
       <div class="draft-edit-actions" style="margin-top:4px">
         <button class="btn primary btn-sm" id="newConvSubmit">Start conversation</button>
@@ -1064,6 +1064,21 @@ function bindForms(){
     setPage("feed");
   };
 
+  // ── Messages: clear error when user corrects the new-conversation form ─────
+  const newConvRecipient = $("#newConvRecipient");
+  const newConvName      = $("#newConvName");
+  const newConvErrEl     = $("#newConvError");
+  if (newConvRecipient && newConvErrEl) {
+    newConvRecipient.addEventListener("input", () => {
+      newConvErrEl.style.display = "none"; newConvErrEl.textContent = "";
+    });
+  }
+  if (newConvName && newConvErrEl) {
+    newConvName.addEventListener("input", () => {
+      newConvErrEl.style.display = "none"; newConvErrEl.textContent = "";
+    });
+  }
+
   const prof=$("#profileForm");
   if(prof)prof.onsubmit=async e=>{
     e.preventDefault();
@@ -1347,20 +1362,31 @@ document.addEventListener("click",async e=>{
   if(e.target.id==="newConvSubmit"){
     if(!currentUser){showAuthGate("Messaging requires a SHATTERED account.");return;}
     const nameVal=($("#newConvName")?.value||"").trim();
-    const emailVal=($("#newConvMemberEmail")?.value||"").trim();
+    const recipientVal=($("#newConvRecipient")?.value||"").trim();
     const errEl=$("#newConvError");
+    // Clear any previous error
+    if(errEl){errEl.style.display="none";errEl.textContent="";}
     if(!nameVal){if(errEl){errEl.textContent="Enter a conversation name.";errEl.style.display="";}return;}
-    if(!emailVal){if(errEl){errEl.textContent="Enter the participant's email address.";errEl.style.display="";}return;}
-    if(errEl){errEl.style.display="none";}
+    if(!recipientVal){if(errEl){errEl.textContent="Enter the recipient's username or email address.";errEl.style.display="";}return;}
+    // Self-check by email: if the recipient field contains the signed-in user's email address
+    if(recipientVal.includes("@")&&recipientVal.toLowerCase()===currentUser.email?.toLowerCase()){
+      if(errEl){errEl.textContent="You cannot start a conversation with yourself.";errEl.style.display="";}
+      return;
+    }
     e.target.disabled=true;e.target.textContent="Starting…";
     try{
-      // Look up the other user's UID by email from Firestore users collection
-      const otherUser=await getUserByEmail(emailVal);
+      // Force a fresh ID token to ensure the Firestore client has a valid
+      // auth token before attempting the write — avoids "permission denied"
+      // from a stale or not-yet-acquired token immediately after sign-in.
+      await currentUser.getIdToken(/* forceRefresh */ false);
+      // Resolve the recipient by username or email
+      const otherUser=await resolveRecipient(recipientVal);
       if(!otherUser){
-        if(errEl){errEl.textContent=`No SHATTERED account found for ${emailVal}.`;errEl.style.display="";}
+        if(errEl){errEl.textContent=`No SHATTERED account found for "${recipientVal}". Check the username or email and try again.`;errEl.style.display="";}
         e.target.disabled=false;e.target.textContent="Start conversation";
         return;
       }
+      // Use the Firestore document ID (= Firebase Auth UID) as identity — never the email
       const otherUid=otherUser.id;
       if(otherUid===currentUser.uid){
         if(errEl){errEl.textContent="You cannot start a conversation with yourself.";errEl.style.display="";}
@@ -1368,6 +1394,8 @@ document.addEventListener("click",async e=>{
         return;
       }
       const newId=await createConversation([currentUser.uid,otherUid],nameVal);
+      // Only open the thread if Firestore confirmed creation (newId is a string)
+      if(!newId){throw new Error("Conversation was not created — no ID returned.");}
       openConversation(newId);
       toast("Conversation started!");
     }catch(err){
@@ -1556,14 +1584,17 @@ async function init(){
 
       if (!_authWatchInitialized) {
         _authWatchInitialized = true;
-        const sameUser = (newUser?.uid ?? null) === (currentUser?.uid ?? null);
-        // Always call updateHeader with authSettled=true on the first watchAuthState
-        // fire so the loading state is removed and the correct nav is shown,
-        // regardless of whether the user changed.
-        if (sameUser) {
+        const sameUid = (newUser?.uid ?? null) === (currentUser?.uid ?? null);
+        // On the first watchAuthState fire, always settle the loading state.
+        // If the UID matches (or both are null), update the header with the
+        // already-resolved currentUser — do not downgrade a signed-in session
+        // to null just because this fire happens to be the same state.
+        if (sameUid) {
           updateHeader(currentUser, { authSettled: true });
           return;
         }
+        // If the first fire has a DIFFERENT user (e.g. session changed between
+        // getShatteredAuth and watchAuthState), fall through to update currentUser.
       }
 
       const prevUid = currentUser?.uid ?? null;
