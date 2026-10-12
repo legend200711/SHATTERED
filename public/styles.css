@@ -376,14 +376,22 @@ html, body {
     padding-bottom: env(safe-area-inset-bottom, 20px);
   }
 
-  /* Extra bottom clearance when audio player is open */
-  body.player-open .app-shell {
-    padding-bottom: 160px;
+  /* Remove the global 90px bottom padding on mobile — it was reserved for the
+     old bottom navigation bar which has been removed. The audio player is
+     position:fixed and does not need scroll clearance via padding. */
+  .app-shell {
+    padding-bottom: 0;
   }
 
-  /* Toast: stay above player bar when open */
+  /* Re-add clearance only when the audio player bar is actually visible.
+     The mobile player bar is ~70px tall; 90px gives it comfortable clearance. */
+  body.player-open .app-shell {
+    padding-bottom: 90px;
+  }
+
+  /* Toast: stay above the player bar when it is open */
   #toast {
-    bottom: 90px;
+    bottom: 80px;
   }
 
   /* Ensure forms are fully usable */
