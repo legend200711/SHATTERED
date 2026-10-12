@@ -734,7 +734,7 @@ async function playTrack(id){
   const audio=$("#audio");
   if(currentTrackId===id&&!audio.paused){audio.pause();$("#togglePlay").textContent="▶";return;}
 
-  // Prefer local blob (uploader on same device); fall back to Firebase Storage download URL
+  // Prefer local blob (uploader on same device); fall back to Worker/R2 download URL
   if(t.blob){
     if(!objectUrls.has(id))objectUrls.set(id,URL.createObjectURL(t.blob));
     audio.src=objectUrls.get(id);
@@ -746,11 +746,40 @@ async function playTrack(id){
   }
 
   currentTrackId=id;
-  $("#player").hidden=false;
+  const playerEl=$("#player");
+  playerEl.hidden=false;
+  document.body.classList.add("player-open");
   $("#playerTitle").textContent=t.title;
   $("#playerArtist").textContent=t.artist;
   $("#playerCover").textContent="S/";
-  await audio.play().catch(()=>toast("Playback could not start. Try selecting the track again."));
+
+  // Remove any previous error listener to avoid stacking handlers
+  audio._shatteredErrorHandler && audio.removeEventListener("error", audio._shatteredErrorHandler);
+  audio._shatteredErrorHandler = function(){
+    const err = audio.error;
+    const codes = {1:"ABORTED",2:"NETWORK",3:"DECODE",4:"SRC_NOT_SUPPORTED"};
+    const label = err ? (codes[err.code] || "UNKNOWN") : "UNKNOWN";
+    const msg = err?.message || "";
+    console.error(`[SHATTERED] Audio error for "${t.title}": MediaError code=${err?.code} (${label}) ${msg} src=${audio.src}`);
+    const userMsg = err?.code === 4
+      ? "This audio format is not supported by your browser."
+      : err?.code === 2
+      ? "Network error — check your connection and try again."
+      : "Playback could not start. Try selecting the track again.";
+    toast(userMsg);
+    $("#togglePlay").textContent="▶";
+  };
+  audio.addEventListener("error", audio._shatteredErrorHandler);
+
+  try {
+    await audio.play();
+  } catch(err) {
+    console.error(`[SHATTERED] play() rejected for "${t.title}":`, err.name, err.message, "src:", audio.src);
+    if (err.name !== "AbortError") {
+      // AbortError is a normal race (track changed before play settled); silence it
+      toast("Playback could not start. Try selecting the track again.");
+    }
+  }
   $("#togglePlay").textContent=audio.paused?"▶":"Ⅱ";
 }
 function findIndex(){return tracks.findIndex(t=>t.id===currentTrackId);}
@@ -850,7 +879,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const tp = $("#togglePlay"); if(tp) tp.addEventListener("click",()=>{const a=$("#audio");if(!a.src)return;if(a.paused)a.play();else a.pause();tp.textContent=a.paused?"▶":"Ⅱ";});
   const pt = $("#prevTrack");  if(pt) pt.addEventListener("click",()=>nextTrack(-1));
   const nt = $("#nextTrack");  if(nt) nt.addEventListener("click",()=>nextTrack(1));
-  const cp = $("#closePlayer");if(cp) cp.addEventListener("click",()=>{$("#audio")?.pause();const pl=$("#player");if(pl)pl.hidden=true;});
+  const cp = $("#closePlayer");if(cp) cp.addEventListener("click",()=>{$("#audio")?.pause();const pl=$("#player");if(pl){pl.hidden=true;document.body.classList.remove("player-open");}});
   const au = $("#audio");
   if(au){
     au.addEventListener("timeupdate",()=>{const a=au;const ct=$("#currentTime");const du=$("#duration");const sk=$("#seek");if(ct)ct.textContent=time(a.currentTime);if(du)du.textContent=time(a.duration);if(sk)sk.value=a.duration?a.currentTime/a.duration*100:0;});

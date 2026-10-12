@@ -71,3 +71,414 @@ body[data-auth-state="loading"] .sidebar-creator{visibility:hidden;pointer-event
 .upload-overlay-error{color:#ff9070;font-size:12px;line-height:1.5;margin-top:14px;padding:10px 12px;background:#1f0f0a;border-radius:8px;text-align:left}
 .upload-cancel-btn{opacity:.75}
 .upload-cancel-btn:hover{opacity:1}
+
+/* ── Track owner menu (⋮) ────────────────────────────────────────────────── */
+.track-owner-menu{position:absolute;top:8px;right:8px;z-index:5}
+.track-card{position:relative}
+.track-menu-btn{width:28px;height:28px;border-radius:8px;background:#0b1c28cc;border:1px solid #2a3d50;color:var(--muted);font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;backdrop-filter:blur(4px)}
+.track-menu-btn:hover,.track-menu-btn[aria-expanded="true"]{background:var(--panel2);color:var(--text);border-color:var(--blue)}
+.track-menu-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:5px;min-width:150px;z-index:50;box-shadow:0 8px 24px #00000099}
+.track-menu-item{display:block;width:100%;text-align:left;background:none;border:0;padding:9px 12px;border-radius:7px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer}
+.track-menu-item:hover{background:var(--line)}
+.track-menu-item.danger{color:#ff7070}
+.track-menu-item.danger:hover{background:#2a0f0f}
+/* ── Delete confirm dialog tweak ──────────────────────────────────────────── */
+.delete-confirm-box .auth-gate-actions{flex-direction:row;justify-content:center;flex-wrap:wrap}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE PORTRAIT RESPONSIVE FIXES
+   Fixes every layout, overflow, and accessibility issue for portrait phones
+   from 320 CSS px up through tablets. Desktop is unaffected.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Prevent horizontal scroll globally ─────────────────────────────────── */
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* ── section-head: wrap when title + link can't fit side-by-side ─────────── */
+.section-head {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── list-card: protect text from overflowing ──────────────────────────── */
+.list-card > div {
+  min-width: 0;
+  overflow: hidden;
+}
+.list-card h3, .list-card p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Allow lyric body paragraphs to wrap normally (not card context) */
+.panel pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* ── Modals: scrollable content on short/small screens ──────────────────── */
+/* (The align-items override is scoped to mobile only in the 760px block below) */
+.auth-gate-box,
+.upload-overlay-box {
+  max-height: none;
+  margin: auto;
+}
+
+/* ── Player: safe-area padding so iOS home bar doesn't cover controls ────── */
+.player {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Profile banner: wrap gracefully ────────────────────────────────────── */
+.profile-banner {
+  flex-wrap: wrap;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   480px — small phones (iPhone SE, Android 360-class)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+
+  /* topbar: tighten so brand + search + avatar all fit */
+  .topbar {
+    padding: 0 10px;
+    gap: 8px;
+  }
+  .brand {
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  /* Don't let brand grow and steal space from search */
+  .brand {
+    flex: 0 0 auto;
+  }
+  .search {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .top-actions {
+    flex-shrink: 0;
+  }
+
+  /* hero: reduce h1 to prevent overflow */
+  .hero h1 {
+    font-size: 36px;
+  }
+  .hero {
+    min-height: auto;
+    padding: 22px 16px 100px;
+  }
+  /* hero-art: push further out so it doesn't overlap text */
+  .hero-art {
+    right: -110px;
+    top: 80%;
+    opacity: 0.2;
+  }
+
+  /* hero-buttons: full-width stacked on tiny screens */
+  .hero-buttons {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hero-buttons .btn,
+  .hero-buttons a.btn {
+    text-align: center;
+    width: 100%;
+  }
+
+  /* stats-strip: single column on tiny phones */
+  .stats-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* track grid: 1 column on very narrow (< 380px is handled in 380px block) */
+  .track-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* forms: make select/input text readable */
+  .field input,
+  .field textarea,
+  .field select {
+    font-size: 16px; /* prevent iOS zoom on focus */
+  }
+
+  /* auth-gate-box: tighter padding */
+  .auth-gate-box {
+    padding: 24px 16px;
+  }
+
+  /* upload overlay: tighter padding */
+  .upload-overlay-box {
+    padding: 24px 16px;
+  }
+
+  /* section-head: stack label + button vertically */
+  .section-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  /* panel: tighter padding */
+  .panel {
+    padding: 14px 12px;
+  }
+
+  /* profile-banner: stack avatar + text vertically */
+  .profile-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  /* page-title: fit narrow screens */
+  .page-title {
+    font-size: 24px;
+  }
+
+  /* manifesto: compact */
+  .manifesto {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  /* feed post: prevent overflow */
+  .feed-post p {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  /* post-actions: wrap if needed */
+  .post-actions {
+    flex-wrap: wrap;
+  }
+
+  /* list-card: allow text to wrap on very narrow screens */
+  .list-card {
+    flex-wrap: wrap;
+  }
+  .list-card .text-link {
+    margin-left: 0;
+    margin-top: 6px;
+  }
+
+  /* guest-actions: only show one button on tiny screens */
+  .guest-actions .btn-sm:first-child {
+    display: none;
+  }
+
+  /* player-track: don't let title clip at fixed max-width */
+  .player-track b {
+    max-width: calc(100vw - 160px);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   380px and narrower — very small phones (320px class)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+
+  /* topbar: even tighter at 320px */
+  .topbar {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  /* brand: hide the "SHATTERED / MUSIC WITHOUT LIMITS" text, keep just S/ */
+  .brand > span:last-child {
+    display: none;
+  }
+  .brand {
+    flex: 0 0 auto;
+  }
+
+  /* search: keep visible but let it fill remaining space */
+  .search {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 6px;
+    gap: 5px;
+  }
+  .search span {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .search input {
+    min-width: 0;
+  }
+
+  /* track grid: single column */
+  .track-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* cover: slightly shorter */
+  .cover {
+    height: 90px;
+  }
+
+  /* player title: max width for very small screen */
+  .player-track b {
+    max-width: calc(100vw - 140px);
+  }
+
+  /* forms: even tighter */
+  .panel {
+    padding: 12px 10px;
+  }
+  .auth-gate-box {
+    padding: 20px 12px;
+  }
+  .upload-overlay-box {
+    padding: 20px 12px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   760px — tablet & standard mobile (already partially handled above)
+   These supplement the existing @media(max-width:760px) rules
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 760px) {
+
+  /* Prevent any element from overflowing horizontally */
+  main, .panel, .hero, .stats-strip, .track-grid, .split-sections, .stack-list {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Fix topbar so all items wrap safely */
+  .topbar {
+    overflow: visible;
+  }
+
+  /* Modals: scrollable on small screens */
+  .auth-gate-overlay,
+  .upload-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding-top: env(safe-area-inset-top, 20px);
+    padding-bottom: env(safe-area-inset-bottom, 20px);
+  }
+
+  /* Extra bottom clearance when audio player is open */
+  body.player-open .app-shell {
+    padding-bottom: 160px;
+  }
+
+  /* Toast: stay above mobile-nav + player bars */
+  #toast {
+    bottom: 160px;
+  }
+
+  /* Ensure forms are fully usable */
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .field.full {
+    grid-column: auto;
+  }
+
+  /* Fix file input on mobile: allow overflow to next line */
+  .field input[type="file"] {
+    word-break: break-all;
+    max-width: 100%;
+  }
+
+  /* section-head: wrap so "Browse all" link stays accessible */
+  .section-head {
+    flex-wrap: wrap;
+  }
+
+  /* Collab + lyrics item buttons: don't let "I'm interested" overflow */
+  .panel .btn.outline {
+    word-break: break-word;
+    white-space: normal;
+  }
+
+  /* list-card text: allow line breaks */
+  .list-card h3 {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.4;
+  }
+
+  /* Player: ensure timeline doesn't overflow */
+  .player-timeline {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .player-timeline input[type="range"] {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Modals: constrain height to viewport */
+  .auth-gate-box,
+  .upload-overlay-box {
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+  }
+
+  /* upload-overlay-box: prevent very long filenames overflowing */
+  .upload-overlay-track {
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  /* delete confirm dialog: keep buttons accessible */
+  .delete-confirm-box .auth-gate-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* profile-banner: let it breathe on narrow screens */
+  .profile-banner h2 {
+    font-size: 18px;
+    word-break: break-word;
+  }
+
+  /* long usernames/emails in dropdown */
+  .profile-dropdown-user strong,
+  .profile-dropdown-user small {
+    max-width: 100%;
+  }
+
+  /* feed post overflow */
+  .feed-post {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* empty-state: ensure readable */
+  .empty-state {
+    padding: 22px 14px;
+  }
+
+  /* auth-required-panel: full width */
+  .auth-required-panel {
+    padding: 28px 16px;
+    max-width: 100%;
+  }
+
+  /* sidebar-note: only shows on desktop where sidebar is visible */
+  /* (sidebar is display:none at 760px, so this is a no-op but safe) */
+
+  /* main: prevent any child from creating horizontal scroll */
+  main * {
+    max-width: 100%;
+  }
+  main img, main video {
+    height: auto;
+  }
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
