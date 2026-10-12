@@ -234,9 +234,23 @@ function updateDrawerAuth(user) {
   if (guestSec)     guestSec.hidden     = !!user;
 }
 
-function updateProfileMenu(user) {
+/**
+ * Update the top-right avatar button and profile dropdown with the user's
+ * display name and email.
+ *
+ * nameOverride — pass this when you already have the correct display name
+ *   (e.g. freshly loaded from Firestore via profileCache). When omitted,
+ *   falls back to user.displayName from the Firebase Auth object, which may
+ *   lag behind Firestore by one page-load cycle.
+ */
+function updateProfileMenu(user, nameOverride) {
   if (!user) return;
-  const name  = user.displayName || user.email?.split("@")[0] || "Creator";
+  // Prefer: explicit override → Firestore cache → Auth object → email prefix
+  const name  = nameOverride
+             || (profileCache && profileCache.displayName)
+             || user.displayName
+             || user.email?.split("@")[0]
+             || "Creator";
   const abbr  = name.slice(0,3).toUpperCase();
   const btn   = $("#profileAvatarBtn");
   if (btn) { btn.textContent = abbr; btn.setAttribute("aria-label", `Account menu — ${name}`); }
@@ -1081,8 +1095,10 @@ function bindForms(){
       // ── 4. Keep localStorage in sync for offline/fallback reads.
       localStorage.setItem(`shattered-bio-${currentUser.uid}`, bio);
 
-      // ── 5. Update the header avatar abbreviation (name may have changed).
-      updateProfileMenu(currentUser);
+      // ── 5. Update the header avatar abbreviation with the just-saved name.
+      //        Pass `name` explicitly — currentUser.displayName may not yet
+      //        reflect the updateAuthDisplayName() call on this JS object.
+      updateProfileMenu(currentUser, name);
 
       // ── 6. Update the banner and form values in-place (no page destroy).
       //        This avoids losing scroll position and immediately reflects the
@@ -1500,6 +1516,13 @@ async function init(){
       await upsertUserProfile(currentUser);
       // Pre-load the profile cache so the profile page renders instantly
       await loadProfileCache();
+      // Re-paint the header now that we have the Firestore display name.
+      // updateHeader() was called earlier with only the Auth object, which may
+      // not yet have the correct displayName if it was saved via the profile
+      // form on a previous session. profileCache now has the Firestore value.
+      if (profileCache?.displayName) {
+        updateProfileMenu(currentUser, profileCache.displayName);
+      }
       // Subscribe to user's conversations for real-time messaging
       subscribeUserConversations();
     }
