@@ -517,7 +517,6 @@ function setPage(page){
   // chooses to leave. The overlay stays visible.
   const main=$("#main");
   $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
-  $$(".mobile-nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   // Update drawer active highlights
   $$(".drawer-item[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   const views={home:homeView,music:musicView,videos:videosView,lyrics:lyricsView,collab:collabView,feed:feedView,messages:messagesView,notifications:notificationsView,upload:uploadView,profile:profileView};
