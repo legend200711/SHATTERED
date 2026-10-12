@@ -1,4 +1,4 @@
-const CACHE="shattered-shell-v7";
+const CACHE="shattered-shell-v8";
 const ASSETS=[
   "./",
   "./index.html",
